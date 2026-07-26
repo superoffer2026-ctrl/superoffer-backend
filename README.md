@@ -1,6 +1,6 @@
 # SuperOffer Backend
 
-Deployment-ready API service for the SuperOffer frontend. This first backend slice uses in-memory demo data so the frontend/API integration and Dokploy deployment can be demonstrated before database work begins.
+Deployment-ready Node.js and Express.js API service for the SuperOffer frontend. It uses MongoDB when `MONGODB_URI` is configured and keeps an in-memory fallback for isolated frontend development and automated API tests.
 
 ## Run locally
 
@@ -30,5 +30,6 @@ Every request writes a one-line JSON event to stdout. Dokploy displays these eve
 - Application port: `3000`
 - Health check path: `/health`
 - Environment: `CORS_ORIGIN=https://your-frontend-domain`
+- Database: `MONGODB_URI=mongodb://superoffer:<password>@<database-host>:27017/superoffer?authSource=admin`
 
 Use a generated Dokploy domain if a custom API domain is not ready.

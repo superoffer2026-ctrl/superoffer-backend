@@ -1,20 +1,23 @@
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import { after, before, test } from 'node:test';
-import { createHandler } from '../src/app.js';
+import { createApp } from '../src/app.js';
 
 let server;
 let baseUrl;
+let repository;
 
 before(async () => {
-  server = http.createServer(createHandler({ logger: { info() {}, error() {} } }));
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const created = createApp({ logger: { info() {}, error() {} } });
+  repository = created.repository;
+  server = created.app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
 after(async () => {
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
+  await repository.close();
 });
 
 test('health endpoint reports a healthy service', async () => {
