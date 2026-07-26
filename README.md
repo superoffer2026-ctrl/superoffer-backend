@@ -22,6 +22,8 @@ Health check: `GET http://localhost:3000/health`
 
 Every request writes a one-line JSON event to stdout. Dokploy displays these events in the application Logs tab.
 
+See `API_RESPONSES.md` for every implemented Student, University, and shared Invitation endpoint and its verified response contract.
+
 ## Dokploy settings
 
 - Build type: `Dockerfile`
