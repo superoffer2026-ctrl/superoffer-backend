@@ -50,6 +50,7 @@ test('student portal profile and offers return stable response contracts', async
   const offers = await offersResponse.json();
   assert.equal(offersResponse.status, 200);
   assert.ok(Array.isArray(offers.results));
+  assert.equal(offers.results[0].institution, 'Northbridge University');
   assert.equal(offers.source, 'superoffer-api');
 });
 

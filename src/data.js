@@ -7,6 +7,7 @@ export const students = [
 ];
 
 export const offers = [
+  { id: 'offer-1000', student_id: 1, institution: 'Northbridge University', institution_initial: 'N', program: 'MSc Data Science', award: '40% Global Excellence Scholarship', status: 'SENT', sent_at: '2026-07-24T10:00:00.000Z' },
   { id: 'offer-1001', student_id: 2, program: 'MSc Data Science', award: '30% scholarship', status: 'VIEWED', sent_at: '2026-07-18T10:00:00.000Z' },
   { id: 'offer-1002', student_id: 4, program: 'MSc Data Science', award: '20% scholarship', status: 'ACCEPTED', sent_at: '2026-07-15T10:00:00.000Z' },
   { id: 'offer-1003', student_id: 3, program: 'MSc Artificial Intelligence', award: 'Priority admission', status: 'SENT', sent_at: '2026-07-12T10:00:00.000Z' }
