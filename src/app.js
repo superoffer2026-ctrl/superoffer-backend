@@ -55,6 +55,39 @@ export const createApp = ({ logger = console, repository = new SuperOfferReposit
   app.get('/health', health);
   app.get('/api/v1/health', health);
 
+  app.get('/api/v1/students/me', async (_request, response, next) => {
+    try {
+      const student = await repository.getStudent(1);
+      if (!student) return response.status(404).json({ code: 'STUDENT_NOT_FOUND', message: 'Student profile was not found' });
+      response.json({
+        ...student,
+        completion_percent: 92,
+        preferences: {
+          target_countries: ['Canada', 'United Kingdom'],
+          target_courses: ['Data Science', 'Artificial Intelligence'],
+          intake_term: 'Fall 2027',
+          budget_band: '$25,000–$35,000 USD',
+          scholarship_need: true
+        },
+        source: 'superoffer-api'
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/v1/students/me/offers', async (_request, response, next) => {
+    try {
+      const results = (await repository.getStudentOffers(1)).map(offer => ({
+        ...offer,
+        status_label: normalizeStatus(offer.status)
+      }));
+      response.json({ results, total_results: results.length, source: 'superoffer-api' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/v1/university/search', async (request, response, next) => {
     try {
       const page = Math.max(1, Number(request.body.page) || 1);

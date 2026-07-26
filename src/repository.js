@@ -86,6 +86,21 @@ export class SuperOfferRepository {
       .toArray();
   }
 
+  async getStudent(studentId) {
+    if (!this.client) return mockStudents.find(student => student.id === studentId) || null;
+    const database = await this.database();
+    return database.collection('students').findOne({ id: studentId }, { projection: { _id: 0 } });
+  }
+
+  async getStudentOffers(studentId) {
+    if (!this.client) return mockOffers.filter(offer => offer.student_id === studentId);
+    const database = await this.database();
+    return database.collection('admission_offers')
+      .find({ student_id: studentId }, { projection: { _id: 0 } })
+      .sort({ sent_at: -1 })
+      .toArray();
+  }
+
   async setShortlisted(studentId, shortlisted) {
     if (!this.client) {
       const student = mockStudents.find(item => item.id === studentId);
