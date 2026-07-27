@@ -13,7 +13,9 @@ export const openApiDocument = {
   ],
   tags: [
     { name: 'Health', description: 'Service availability' },
-    { name: 'Authentication', description: 'Account registration and login' }
+    { name: 'Authentication', description: 'Account registration, login, and approval status' },
+    { name: 'Admin', description: 'Institution approval operations' },
+    { name: 'Student portal', description: 'Authenticated student portal data' }
   ],
   paths: {
     '/health': {
@@ -47,9 +49,14 @@ export const openApiDocument = {
                 universityOfficer: {
                   summary: 'University officer',
                   value: {
+                    full_name: 'Maya Chen',
                     email: 'maya.chen@northbridge.edu',
                     password: 'password123',
-                    role: 'UNIVERSITY_OFFICER'
+                    role: 'UNIVERSITY_OFFICER',
+                    organization: {
+                      name: 'Northbridge University',
+                      registration_number: 'NU-2026'
+                    }
                   }
                 }
               }
@@ -130,6 +137,14 @@ export const openApiDocument = {
               }
             }
           },
+          403: {
+            description: 'Institution account is pending approval or was rejected',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          },
           423: {
             description: 'Account temporarily locked',
             content: {
@@ -137,6 +152,84 @@ export const openApiDocument = {
                 schema: { $ref: '#/components/schemas/LockedResponse' }
               }
             }
+          }
+        }
+      }
+    },
+    '/api/v1/auth/status/{userId}': {
+      get: {
+        tags: ['Authentication'],
+        summary: 'Check an institution registration approval status',
+        operationId: 'getRegistrationStatus',
+        parameters: [{
+          name: 'userId',
+          in: 'path',
+          required: true,
+          schema: { type: 'string', format: 'uuid' }
+        }],
+        responses: {
+          200: {
+            description: 'Current approval status',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ApprovalStatusResponse' }
+              }
+            }
+          },
+          404: {
+            description: 'Registration not found',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/v1/admin/users/{userId}/approval': {
+      patch: {
+        tags: ['Admin'],
+        summary: 'Approve or reject an institution registration',
+        operationId: 'reviewInstitutionRegistration',
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', format: 'uuid' }
+          },
+          {
+            name: 'x-admin-key',
+            in: 'header',
+            required: true,
+            schema: { type: 'string' }
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ApprovalDecisionRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Registration reviewed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ApprovalStatusResponse' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid admin key',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+          },
+          404: {
+            description: 'Registration not found',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
           }
         }
       }
@@ -200,8 +293,10 @@ export const openApiDocument = {
       },
       RegisterRequest: {
         type: 'object',
-        required: ['email', 'password', 'role'],
+        required: ['full_name', 'email', 'password', 'role'],
         properties: {
+          full_name: { type: 'string', minLength: 1 },
+          phone: { type: 'string' },
           email: { type: 'string', format: 'email' },
           password: {
             type: 'string',
@@ -213,15 +308,31 @@ export const openApiDocument = {
           role: {
             type: 'string',
             enum: ['STUDENT', 'UNIVERSITY_OFFICER', 'LOAN_OFFICER', 'CONSULTANT']
-          }
+          },
+          organization: { $ref: '#/components/schemas/OrganizationRegistration' }
+        }
+      },
+      OrganizationRegistration: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: { type: 'string' },
+          registration_number: { type: 'string' },
+          website: { type: 'string' },
+          country: { type: 'string' },
+          city: { type: 'string' },
+          license_reference: { type: 'string' }
         }
       },
       RegisterResponse: {
         type: 'object',
-        required: ['user_id', 'otp_required'],
+        required: ['user_id', 'role', 'approval_status', 'can_login', 'otp_required'],
         properties: {
           user_id: { type: 'string', format: 'uuid' },
-          otp_required: { type: 'boolean', examples: [true] }
+          role: { type: 'string' },
+          approval_status: { type: 'string', enum: ['PENDING', 'APPROVED', 'REJECTED'] },
+          can_login: { type: 'boolean' },
+          otp_required: { type: 'boolean', examples: [false] }
         }
       },
       LoginRequest: {
@@ -252,10 +363,40 @@ export const openApiDocument = {
           expires_in: { type: 'integer', examples: [3600] },
           role: {
             type: 'string',
-            enum: ['STUDENT', 'UNIVERSITY_OFFICER', 'LOAN_OFFICER', 'CONSULTANT']
+            enum: ['STUDENT', 'UNIVERSITY_OFFICER', 'LOAN_OFFICER', 'CONSULTANT', 'SUPER_ADMIN']
+          },
+          approval_status: { type: 'string', enum: ['APPROVED'] },
+          full_name: { type: 'string' },
+          organization: {
+            oneOf: [
+              { $ref: '#/components/schemas/OrganizationRegistration' },
+              { type: 'null' }
+            ]
           },
           mfa_required: { type: 'boolean', examples: [false] },
           email_verified: { type: 'boolean', examples: [false] }
+        }
+      },
+      ApprovalDecisionRequest: {
+        type: 'object',
+        required: ['approval_status'],
+        properties: {
+          approval_status: { type: 'string', enum: ['APPROVED', 'REJECTED'] },
+          rejection_reason: { type: 'string' }
+        }
+      },
+      ApprovalStatusResponse: {
+        type: 'object',
+        required: ['user_id', 'approval_status', 'can_login'],
+        properties: {
+          user_id: { type: 'string', format: 'uuid' },
+          role: { type: 'string' },
+          approval_status: { type: 'string', enum: ['PENDING', 'APPROVED', 'REJECTED'] },
+          can_login: { type: 'boolean' },
+          organization_name: { type: ['string', 'null'] },
+          rejection_reason: { type: ['string', 'null'] },
+          submitted_at: { type: 'string', format: 'date-time' },
+          reviewed_at: { type: ['string', 'null'], format: 'date-time' }
         }
       },
       StudentProfile: {

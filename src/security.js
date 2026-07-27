@@ -6,6 +6,14 @@ const KEY_LENGTH = 64;
 
 const base64Url = value => Buffer.from(value).toString('base64url');
 
+const safeJson = value => {
+  try {
+    return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+};
+
 export const hashPassword = async password => {
   const salt = crypto.randomBytes(16);
   const derivedKey = await scrypt(password, salt, KEY_LENGTH);
@@ -36,4 +44,15 @@ export const createToken = (claims, { secret, expiresInSeconds, type }) => {
     .update(`${header}.${payload}`)
     .digest('base64url');
   return `${header}.${payload}.${signature}`;
+};
+
+export const verifyToken = (token, { secret, type = 'access' }) => {
+  const [header, payload, signature] = String(token || '').split('.');
+  if (!header || !payload || !signature) return null;
+  const expected = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest();
+  const received = Buffer.from(signature, 'base64url');
+  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) return null;
+  const claims = safeJson(payload);
+  if (!claims || claims.type !== type || Number(claims.exp) <= Math.floor(Date.now() / 1000)) return null;
+  return claims;
 };
