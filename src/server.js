@@ -4,12 +4,28 @@ import { InMemoryUserStore } from './user-store.js';
 
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || '0.0.0.0';
-const userStore = process.env.MONGODB_URI
-  ? await new MongoUserStore(
+let userStore = new InMemoryUserStore();
+let persistence = 'memory';
+
+if (process.env.MONGODB_URI) {
+  try {
+    userStore = await new MongoUserStore(
       process.env.MONGODB_URI,
       process.env.MONGODB_DATABASE || 'superoffer'
-    ).connect()
-  : new InMemoryUserStore();
+    ).connect();
+    persistence = 'mongodb';
+  } catch (error) {
+    if (process.env.MONGODB_REQUIRED === 'true') throw error;
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'mongodb_connection_failed',
+      message: error.message,
+      fallback: 'memory',
+      timestamp: new Date().toISOString()
+    }));
+  }
+}
+
 const { app } = createApp({ userStore });
 
 const server = app.listen(port, host, () => {
@@ -17,7 +33,7 @@ const server = app.listen(port, host, () => {
     level: 'info',
     event: 'server_started',
     service: 'superoffer-auth',
-    persistence: process.env.MONGODB_URI ? 'mongodb' : 'memory',
+    persistence,
     host,
     port,
     timestamp: new Date().toISOString()

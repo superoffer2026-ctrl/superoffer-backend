@@ -49,6 +49,18 @@ after(async () => {
   await new Promise(resolve => server.close(resolve));
 });
 
+test('serves backend information at the root URL', async () => {
+  const response = await fetch(`${baseUrl}/`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.equal(body.service, 'superoffer-backend');
+  assert.equal(body.api_base, '/api/v1');
+  assert.equal(body.health, '/health');
+  assert.equal(body.documentation, '/api-docs');
+});
+
 test('registers a university officer and rejects duplicate email', async () => {
   const registration = await request('/api/v1/auth/register', institutionRegistration());
   assert.equal(registration.response.status, 201);

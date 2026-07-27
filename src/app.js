@@ -34,6 +34,18 @@ export const createApp = ({
   }));
   app.use(express.json({ limit: '100kb' }));
 
+  app.get('/', (_request, response) => {
+    response.json({
+      status: 'ok',
+      service: 'superoffer-backend',
+      message: 'SuperOffer API is running',
+      api_base: '/api/v1',
+      health: '/health',
+      documentation: '/api-docs',
+      openapi: '/api-docs.json'
+    });
+  });
+
   app.get('/api-docs.json', (_request, response) => response.json(openApiDocument));
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiDocument, {
     customSiteTitle: 'SuperOffer API Documentation',

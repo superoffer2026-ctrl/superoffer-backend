@@ -2,7 +2,12 @@ import { MongoClient } from 'mongodb';
 
 export class MongoUserStore {
   constructor(connectionString, databaseName = 'superoffer') {
-    this.client = new MongoClient(connectionString, { maxPoolSize: 10 });
+    const serverSelectionTimeoutMS =
+      Number(process.env.MONGODB_CONNECT_TIMEOUT_MS) || 5_000;
+    this.client = new MongoClient(connectionString, {
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS
+    });
     this.databaseName = databaseName;
     this.users = null;
   }
