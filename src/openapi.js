@@ -7,6 +7,10 @@ export const openApiDocument = {
   },
   servers: [
     {
+      url: 'https://api.superoffer.net',
+      description: 'Production'
+    },
+    {
       url: 'http://127.0.0.1:3000',
       description: 'Local development'
     }
@@ -18,6 +22,18 @@ export const openApiDocument = {
     { name: 'Student portal', description: 'Authenticated student portal data' }
   ],
   paths: {
+    '/': {
+      get: {
+        tags: ['Health'],
+        summary: 'Show API service information',
+        operationId: 'getServiceInformation',
+        responses: {
+          200: {
+            description: 'Backend service information and useful API links'
+          }
+        }
+      }
+    },
     '/health': {
       get: {
         tags: ['Health'],
