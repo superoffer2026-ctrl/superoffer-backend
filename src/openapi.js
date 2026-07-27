@@ -140,6 +140,51 @@ export const openApiDocument = {
           }
         }
       }
+    },
+    '/api/v1/students/me': {
+      get: {
+        tags: ['Student portal'],
+        summary: 'Get the current student profile',
+        operationId: 'getCurrentStudent',
+        responses: {
+          200: {
+            description: 'Student profile used by the student dashboard',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/StudentProfile' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/v1/students/me/offers': {
+      get: {
+        tags: ['Student portal'],
+        summary: 'Get offers for the current student',
+        operationId: 'getCurrentStudentOffers',
+        responses: {
+          200: {
+            description: 'Student offer list',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['results', 'total_results', 'source'],
+                  properties: {
+                    results: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/StudentOffer' }
+                    },
+                    total_results: { type: 'integer' },
+                    source: { type: 'string' }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   components: {
@@ -211,6 +256,52 @@ export const openApiDocument = {
           },
           mfa_required: { type: 'boolean', examples: [false] },
           email_verified: { type: 'boolean', examples: [false] }
+        }
+      },
+      StudentProfile: {
+        type: 'object',
+        required: ['id', 'name', 'initials', 'completion_percent', 'preferences'],
+        properties: {
+          id: { type: 'integer' },
+          name: { type: 'string' },
+          initials: { type: 'string' },
+          email: { type: 'string', format: 'email' },
+          location: { type: 'string' },
+          program: { type: 'string' },
+          education: { type: 'string' },
+          gpa: { type: 'string' },
+          exam: { type: 'string' },
+          score: { type: 'integer' },
+          skills: { type: 'array', items: { type: 'string' } },
+          completion_percent: { type: 'integer', minimum: 0, maximum: 100 },
+          preferences: {
+            type: 'object',
+            required: ['target_countries', 'target_courses', 'budget_band'],
+            properties: {
+              target_countries: { type: 'array', items: { type: 'string' } },
+              target_courses: { type: 'array', items: { type: 'string' } },
+              degree_level: { type: 'string' },
+              intake_term: { type: 'string' },
+              budget_band: { type: 'string' },
+              scholarship_need: { type: 'boolean' }
+            }
+          },
+          source: { type: 'string' }
+        }
+      },
+      StudentOffer: {
+        type: 'object',
+        required: ['id', 'institution', 'program', 'status', 'status_label'],
+        properties: {
+          id: { type: 'string' },
+          student_id: { type: 'integer' },
+          institution: { type: 'string' },
+          institution_initial: { type: 'string' },
+          program: { type: 'string' },
+          award: { type: 'string' },
+          status: { type: 'string' },
+          status_label: { type: 'string' },
+          sent_at: { type: 'string', format: 'date-time' }
         }
       },
       ErrorResponse: {

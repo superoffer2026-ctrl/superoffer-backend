@@ -4,6 +4,7 @@ import express from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { openApiDocument } from './openapi.js';
 import { createToken, hashPassword, verifyPassword } from './security.js';
+import { studentOffers, studentProfile } from './student-portal-data.js';
 import { InMemoryUserStore } from './user-store.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -159,6 +160,18 @@ export const createApp = ({
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get('/api/v1/students/me', (_request, response) => {
+    response.json(studentProfile);
+  });
+
+  app.get('/api/v1/students/me/offers', (_request, response) => {
+    response.json({
+      results: studentOffers,
+      total_results: studentOffers.length,
+      source: 'superoffer-api'
+    });
   });
 
   app.use((request, response) => {

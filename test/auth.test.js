@@ -55,10 +55,28 @@ test('serves Swagger UI and the OpenAPI document', async () => {
   assert.equal(document.openapi, '3.1.0');
   assert.ok(document.paths['/api/v1/auth/register']);
   assert.ok(document.paths['/api/v1/auth/login']);
+  assert.ok(document.paths['/api/v1/students/me']);
+  assert.ok(document.paths['/api/v1/students/me/offers']);
 
   const uiResponse = await fetch(`${baseUrl}/api-docs/`);
   assert.equal(uiResponse.status, 200);
   assert.match(await uiResponse.text(), /SuperOffer API Documentation/);
+});
+
+test('returns the student portal profile and offers expected by the frontend', async () => {
+  const profileResponse = await fetch(`${baseUrl}/api/v1/students/me`);
+  const profile = await profileResponse.json();
+  assert.equal(profileResponse.status, 200);
+  assert.equal(profile.name, 'Aarav Mehta');
+  assert.equal(profile.completion_percent, 82);
+  assert.ok(Array.isArray(profile.preferences.target_countries));
+
+  const offersResponse = await fetch(`${baseUrl}/api/v1/students/me/offers`);
+  const offers = await offersResponse.json();
+  assert.equal(offersResponse.status, 200);
+  assert.equal(offers.total_results, 1);
+  assert.equal(offers.results[0].institution, 'Northbridge University');
+  assert.equal(offers.results[0].status_label, 'Pending');
 });
 
 test('validates registration email, password, and public role', async () => {
