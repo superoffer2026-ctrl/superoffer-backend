@@ -303,6 +303,45 @@ test('lists pending institution registrations for an authorized admin', async ()
   assert.ok(body.registrations.every(item => !('passwordHash' in item)));
 });
 
+test('filters institution queues and records approval decisions in the append-only audit log', async () => {
+  const registration = await request('/api/v1/auth/register', institutionRegistration({
+    email:'bank.review@example.com',
+    role:'LOAN_OFFICER',
+    organization:{ name:'Review Bank', registration_number:'BANK-100', license_reference:'RBI-200' }
+  }));
+  assert.equal(registration.response.status, 201);
+
+  let response = await fetch(`${baseUrl}/api/v1/admin/registrations?status=PENDING&org_type=BANK`, {
+    headers:{ 'x-admin-key':'test-admin-key' }
+  });
+  let body = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(body.registrations.some(item => item.email === 'bank.review@example.com'));
+  assert.ok(body.registrations.every(item => item.role === 'LOAN_OFFICER'));
+  assert.ok(body.summary.banks >= 1);
+
+  response = await fetch(`${baseUrl}/api/v1/admin/users/${registration.body.user_id}/approval`, {
+    method:'PATCH',
+    headers:{ 'content-type':'application/json', 'x-admin-key':'test-admin-key' },
+    body:JSON.stringify({ approval_status:'REJECTED' })
+  });
+  body = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(body.code, 'REJECTION_REASON_REQUIRED');
+
+  response = await fetch(`${baseUrl}/api/v1/admin/users/${registration.body.user_id}/approval`, {
+    method:'PATCH',
+    headers:{ 'content-type':'application/json', 'x-admin-key':'test-admin-key' },
+    body:JSON.stringify({ approval_status:'REJECTED', rejection_reason:'Licence could not be verified' })
+  });
+  assert.equal(response.status, 200);
+
+  response = await fetch(`${baseUrl}/api/v1/admin/audit-log`, { headers:{ 'x-admin-key':'test-admin-key' } });
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(body.entries.some(entry => entry.entityId === registration.body.user_id && entry.action === 'VERIFICATION_REJECTED'));
+});
+
 test('allows student registration and login without admin approval', async () => {
   const registration = await request('/api/v1/auth/register', {
     email: 'aarav.mehta@email.com',

@@ -2,6 +2,7 @@ export class InMemoryUserStore {
   constructor() {
     this.usersByEmail = new Map();
     this.studentProfiles = new Map();
+    this.auditLogs = [];
   }
 
   async findByEmail(email) {
@@ -12,10 +13,19 @@ export class InMemoryUserStore {
     return [...this.usersByEmail.values()].find(user => user.id === id) || null;
   }
 
-  async findInstitutionsByApprovalStatus(approvalStatus) {
+  async findInstitutionsByApprovalStatus(approvalStatus, role = '') {
     return [...this.usersByEmail.values()]
-      .filter(user => user.role !== 'STUDENT' && (!approvalStatus || user.approvalStatus === approvalStatus))
+      .filter(user => user.role !== 'STUDENT' && (!approvalStatus || user.approvalStatus === approvalStatus) && (!role || user.role === role))
       .map(user => structuredClone(user));
+  }
+
+  async appendAuditLog(entry) {
+    this.auditLogs.unshift(structuredClone(entry));
+    return structuredClone(entry);
+  }
+
+  async listAuditLogs(limit = 100) {
+    return structuredClone(this.auditLogs.slice(0, limit));
   }
 
   async insert(user) {

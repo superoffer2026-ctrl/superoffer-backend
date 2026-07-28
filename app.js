@@ -331,13 +331,21 @@ export const createApp = ({
       }
       const requestedStatus = String(request.query.status || 'PENDING').toUpperCase();
       const approvalStatus = requestedStatus === 'ALL' ? '' : requestedStatus;
+      const requestedType = String(request.query.org_type || 'ALL').toUpperCase();
+      const roleByType = { UNIVERSITY:'UNIVERSITY_OFFICER', BANK:'LOAN_OFFICER', CONSULTANCY:'CONSULTANT' };
+      const role = requestedType === 'ALL' ? '' : roleByType[requestedType];
+      if (requestedType !== 'ALL' && !role) {
+        return response.status(400).json({ code:'VALIDATION_ERROR', message:'org_type must be UNIVERSITY, BANK, CONSULTANCY, or ALL' });
+      }
       if (approvalStatus && !new Set(['PENDING', 'APPROVED', 'REJECTED']).has(approvalStatus)) {
         return response.status(400).json({
           code: 'VALIDATION_ERROR',
           message: 'status must be PENDING, APPROVED, REJECTED, or ALL'
         });
       }
-      const registrations = await userStore.findInstitutionsByApprovalStatus(approvalStatus);
+      const registrations = await userStore.findInstitutionsByApprovalStatus(approvalStatus, role);
+      const allRegistrations = await userStore.findInstitutionsByApprovalStatus('');
+      const count = (status, itemRole = '') => allRegistrations.filter(user => user.approvalStatus === status && (!itemRole || user.role === itemRole)).length;
       response.json({
         registrations: registrations.map(user => ({
           user_id: user.id,
@@ -351,7 +359,13 @@ export const createApp = ({
           reviewed_at: user.reviewedAt || null,
           rejection_reason: user.rejectionReason || null
         })),
-        total_results: registrations.length
+        total_results: registrations.length,
+        summary: {
+          pending:count('PENDING'), approved:count('APPROVED'), rejected:count('REJECTED'),
+          universities:count('PENDING','UNIVERSITY_OFFICER'),
+          banks:count('PENDING','LOAN_OFFICER'),
+          consultancies:count('PENDING','CONSULTANT')
+        }
       });
     } catch (error) {
       next(error);
@@ -377,13 +391,35 @@ export const createApp = ({
       if (!INSTITUTION_ROLES.has(user.role)) {
         return response.status(409).json({ code: 'APPROVAL_NOT_REQUIRED', message: 'Student accounts do not require admin approval' });
       }
+      const rejectionReason = String(request.body.rejection_reason || '').trim();
+      if (approvalStatus === 'REJECTED' && !rejectionReason) {
+        return response.status(400).json({ code:'REJECTION_REASON_REQUIRED', message:'A rejection reason is required' });
+      }
+      const beforeState = {
+        approvalStatus:user.approvalStatus,
+        rejectionReason:user.rejectionReason || null,
+        reviewedAt:user.reviewedAt || null
+      };
       user.approvalStatus = approvalStatus;
       user.rejectionReason = approvalStatus === 'REJECTED'
-        ? String(request.body.rejection_reason || 'The submitted organization details could not be verified')
+        ? rejectionReason
         : null;
+      user.approvalNote = String(request.body.approval_note || '').trim() || null;
       user.reviewedAt = new Date().toISOString();
       user.updatedAt = user.reviewedAt;
       await userStore.update(user);
+      await userStore.appendAuditLog?.({
+        id:crypto.randomUUID(),
+        actorUserId:'SUPER_ADMIN',
+        action:approvalStatus === 'APPROVED' ? 'VERIFICATION_APPROVED' : 'VERIFICATION_REJECTED',
+        entityType:user.organization?.organizationType || user.role,
+        entityId:user.id,
+        organizationName:user.organization?.name || null,
+        beforeState,
+        afterState:{ approvalStatus:user.approvalStatus, rejectionReason:user.rejectionReason, reviewedAt:user.reviewedAt },
+        reason:user.rejectionReason || user.approvalNote,
+        occurredAt:user.reviewedAt
+      });
       response.json({
         user_id: user.id,
         approval_status: user.approvalStatus,
@@ -393,6 +429,18 @@ export const createApp = ({
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get('/api/v1/admin/audit-log', async (request, response, next) => {
+    try {
+      if (request.get('x-admin-key') !== adminApprovalKey) {
+        return response.status(401).json({ code:'ADMIN_UNAUTHORIZED', message:'A valid admin approval key is required' });
+      }
+      const requestedLimit = Number(request.query.limit) || 100;
+      const limit = Math.min(Math.max(requestedLimit, 1), 500);
+      const entries = await userStore.listAuditLogs?.(limit) || [];
+      response.json({ entries, total_results:entries.length });
+    } catch(error) { next(error); }
   });
 
   app.get('/api/v1/students/me', requireAccessToken, async (request, response, next) => {

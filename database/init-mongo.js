@@ -34,6 +34,7 @@ database.createCollection('admission_offers', {
 });
 
 database.createCollection('student_profiles');
+database.createCollection('audit_logs');
 
 database.students.createIndex({ id: 1 }, { unique: true });
 database.students.createIndex({ score: -1 });
@@ -42,6 +43,8 @@ database.admission_offers.createIndex({ id: 1 }, { unique: true });
 database.admission_offers.createIndex({ student_id: 1 });
 database.admission_offers.createIndex({ status: 1 });
 database.student_profiles.createIndex({ userId: 1 }, { unique: true });
+database.audit_logs.createIndex({ occurredAt: -1 });
+database.audit_logs.createIndex({ entityId: 1 });
 
 database.students.insertMany([
   { id: NumberInt(1), name: 'Aarav Mehta', initials: 'AM', location: 'Mumbai, India', program: 'MSc Data Science', education: 'B.Tech Computer Science', gpa: '8.8 / 10', exam: 'IELTS 8.0', score: NumberInt(96), skills: ['Python', 'Machine Learning', 'SQL'], shortlisted: false, color: '#7457dc', created_at: new Date(), updated_at: new Date() },

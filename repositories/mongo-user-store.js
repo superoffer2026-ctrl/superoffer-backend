@@ -11,15 +11,19 @@ export class MongoUserStore {
     this.databaseName = databaseName;
     this.users = null;
     this.studentProfiles = null;
+    this.auditLogs = null;
   }
 
   async connect() {
     await this.client.connect();
     this.users = this.client.db(this.databaseName).collection('users');
     this.studentProfiles = this.client.db(this.databaseName).collection('student_profiles');
+    this.auditLogs = this.client.db(this.databaseName).collection('audit_logs');
     await this.users.createIndex({ email: 1 }, { unique: true });
     await this.users.createIndex({ id: 1 }, { unique: true });
     await this.studentProfiles.createIndex({ userId: 1 }, { unique: true });
+    await this.auditLogs.createIndex({ occurredAt: -1 });
+    await this.auditLogs.createIndex({ entityId: 1 });
     return this;
   }
 
@@ -31,14 +35,24 @@ export class MongoUserStore {
     return this.users.findOne({ id }, { projection: { _id: 0 } });
   }
 
-  async findInstitutionsByApprovalStatus(approvalStatus) {
+  async findInstitutionsByApprovalStatus(approvalStatus, role = '') {
     const query = {
       role: { $in: ['UNIVERSITY_OFFICER', 'LOAN_OFFICER', 'CONSULTANT'] },
-      ...(approvalStatus ? { approvalStatus } : {})
+      ...(approvalStatus ? { approvalStatus } : {}),
+      ...(role ? { role } : {})
     };
     return this.users.find(query, {
       projection: { _id: 0, passwordHash: 0 }
     }).sort({ createdAt: -1 }).toArray();
+  }
+
+  async appendAuditLog(entry) {
+    await this.auditLogs.insertOne({ ...entry });
+    return structuredClone(entry);
+  }
+
+  async listAuditLogs(limit = 100) {
+    return this.auditLogs.find({}, { projection:{ _id:0 } }).sort({ occurredAt:-1 }).limit(limit).toArray();
   }
 
   async insert(user) {
