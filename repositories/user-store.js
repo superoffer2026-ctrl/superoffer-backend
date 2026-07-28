@@ -11,6 +11,12 @@ export class InMemoryUserStore {
     return [...this.usersByEmail.values()].find(user => user.id === id) || null;
   }
 
+  async findInstitutionsByApprovalStatus(approvalStatus) {
+    return [...this.usersByEmail.values()]
+      .filter(user => user.role !== 'STUDENT' && (!approvalStatus || user.approvalStatus === approvalStatus))
+      .map(user => structuredClone(user));
+  }
+
   async insert(user) {
     if (this.usersByEmail.has(user.email)) return null;
     this.usersByEmail.set(user.email, structuredClone(user));

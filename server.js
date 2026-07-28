@@ -1,16 +1,17 @@
 import { createApp } from './app.js';
-import { MongoUserStore } from './mongo-user-store.js';
-import { InMemoryUserStore } from './user-store.js';
+import { MongoUserStore } from './repositories/mongo-user-store.js';
+import { InMemoryUserStore } from './repositories/user-store.js';
 
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || '0.0.0.0';
 let userStore = new InMemoryUserStore();
 let persistence = 'memory';
+const mongodbUri = process.env.MONGODB_ATLAS_URI || process.env.MONGODB_URI;
 
-if (process.env.MONGODB_URI) {
+if (mongodbUri) {
   try {
     userStore = await new MongoUserStore(
-      process.env.MONGODB_URI,
+      mongodbUri,
       process.env.MONGODB_DATABASE || 'superoffer'
     ).connect();
     persistence = 'mongodb';

@@ -2,9 +2,9 @@ import crypto from 'node:crypto';
 import cors from 'cors';
 import express from 'express';
 import swaggerUi from 'swagger-ui-express';
-import { openApiDocument } from './openapi.js';
-import { createToken, hashPassword, verifyPassword, verifyToken } from './security.js';
-import { InMemoryUserStore } from './user-store.js';
+import { openApiDocument } from './config/swagger.js';
+import { InMemoryUserStore } from './repositories/user-store.js';
+import { createToken, hashPassword, verifyPassword, verifyToken } from './utilities/security.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -15,6 +15,7 @@ const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000;
 
 const normalizeEmail = email => String(email || '').trim().toLowerCase();
+const normalizeOrigin = origin => String(origin || '').trim().replace(/\/+$/, '');
 
 export const createApp = ({
   userStore = new InMemoryUserStore(),
@@ -25,12 +26,25 @@ export const createApp = ({
   logger = console
 } = {}) => {
   const app = express();
+  const configuredOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map(normalizeOrigin)
+    .filter(Boolean);
+  const allowedOrigins = new Set([
+    'https://superoffer.net',
+    'https://www.superoffer.net',
+    'http://localhost:4200',
+    ...configuredOrigins
+  ]);
 
   app.disable('x-powered-by');
   app.use(cors({
-    origin: !process.env.CORS_ORIGIN || process.env.CORS_ORIGIN === '*'
-      ? true
-      : process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
+    origin(origin, callback) {
+      if (!origin || process.env.CORS_ORIGIN === '*' || allowedOrigins.has(normalizeOrigin(origin))) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    }
   }));
   app.use(express.json({ limit: '100kb' }));
 
@@ -277,6 +291,40 @@ export const createApp = ({
         role: user.role,
         approval_status: user.approvalStatus || (INSTITUTION_ROLES.has(user.role) ? 'PENDING' : 'APPROVED'),
         organization: user.organization || null
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/v1/admin/registrations', async (request, response, next) => {
+    try {
+      if (request.get('x-admin-key') !== adminApprovalKey) {
+        return response.status(401).json({ code: 'ADMIN_UNAUTHORIZED', message: 'A valid admin approval key is required' });
+      }
+      const requestedStatus = String(request.query.status || 'PENDING').toUpperCase();
+      const approvalStatus = requestedStatus === 'ALL' ? '' : requestedStatus;
+      if (approvalStatus && !new Set(['PENDING', 'APPROVED', 'REJECTED']).has(approvalStatus)) {
+        return response.status(400).json({
+          code: 'VALIDATION_ERROR',
+          message: 'status must be PENDING, APPROVED, REJECTED, or ALL'
+        });
+      }
+      const registrations = await userStore.findInstitutionsByApprovalStatus(approvalStatus);
+      response.json({
+        registrations: registrations.map(user => ({
+          user_id: user.id,
+          full_name: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          approval_status: user.approvalStatus,
+          organization: user.organization,
+          submitted_at: user.createdAt,
+          reviewed_at: user.reviewedAt || null,
+          rejection_reason: user.rejectionReason || null
+        })),
+        total_results: registrations.length
       });
     } catch (error) {
       next(error);

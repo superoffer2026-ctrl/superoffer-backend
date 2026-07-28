@@ -28,6 +28,16 @@ export class MongoUserStore {
     return this.users.findOne({ id }, { projection: { _id: 0 } });
   }
 
+  async findInstitutionsByApprovalStatus(approvalStatus) {
+    const query = {
+      role: { $in: ['UNIVERSITY_OFFICER', 'LOAN_OFFICER', 'CONSULTANT'] },
+      ...(approvalStatus ? { approvalStatus } : {})
+    };
+    return this.users.find(query, {
+      projection: { _id: 0, passwordHash: 0 }
+    }).sort({ createdAt: -1 }).toArray();
+  }
+
   async insert(user) {
     try {
       await this.users.insertOne({ ...user });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { createApp } from '../src/app.js';
+import { createApp } from '../app.js';
 
 let server;
 let baseUrl;
@@ -59,6 +59,23 @@ test('serves backend information at the root URL', async () => {
   assert.equal(body.api_base, '/api/v1');
   assert.equal(body.health, '/health');
   assert.equal(body.documentation, '/api-docs');
+});
+
+test('allows registration requests from the production frontend origins', async () => {
+  for (const origin of ['https://superoffer.net', 'https://www.superoffer.net']) {
+    const response = await fetch(`${baseUrl}/api/v1/auth/register`, {
+      method: 'OPTIONS',
+      headers: {
+        origin,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type'
+      }
+    });
+
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get('access-control-allow-origin'), origin);
+    assert.match(response.headers.get('access-control-allow-methods'), /POST/);
+  }
 });
 
 test('registers a university officer and rejects duplicate email', async () => {
@@ -176,6 +193,22 @@ test('gates institutions until admin approval, then permits login', async () => 
   assert.equal(login.body.expires_in, 3600);
   assert.equal(login.body.access_token.split('.').length, 3);
   assert.equal(login.body.refresh_token.split('.').length, 3);
+});
+
+test('lists pending institution registrations for an authorized admin', async () => {
+  const pendingEmail = 'approval.queue@northbridge.edu';
+  const registration = await request('/api/v1/auth/register', institutionRegistration({
+    email: pendingEmail
+  }));
+  assert.equal(registration.response.status, 201);
+
+  const response = await fetch(`${baseUrl}/api/v1/admin/registrations?status=PENDING`, {
+    headers: { 'x-admin-key': 'test-admin-key' }
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(body.registrations.some(item => item.email === pendingEmail));
+  assert.ok(body.registrations.every(item => !('passwordHash' in item)));
 });
 
 test('allows student registration and login without admin approval', async () => {
