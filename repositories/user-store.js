@@ -38,6 +38,20 @@ export class InMemoryUserStore {
     return structuredClone(profile);
   }
 
+  async updateStudentProfileSection(userId, section, value) {
+    const current = this.studentProfiles.get(userId) || { userId, documents: [], createdAt: new Date().toISOString() };
+    const profile = { ...current, [section]: structuredClone(value), updatedAt: new Date().toISOString() };
+    this.studentProfiles.set(userId, profile);
+    return structuredClone(profile);
+  }
+
+  async addStudentDocument(userId, document) {
+    const current = this.studentProfiles.get(userId) || { userId, documents: [], createdAt: new Date().toISOString() };
+    const profile = { ...current, documents: [...(current.documents || []), structuredClone(document)], updatedAt: new Date().toISOString() };
+    this.studentProfiles.set(userId, profile);
+    return structuredClone(profile);
+  }
+
   async findStudentOffers() {
     return [];
   }

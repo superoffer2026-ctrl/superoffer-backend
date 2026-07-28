@@ -164,6 +164,69 @@ test('returns the student portal profile and offers expected by the frontend', a
   assert.equal(offers.source, 'mongodb');
 });
 
+test('saves all student profile sections independently and calculates weighted completion', async () => {
+  await request('/api/v1/auth/register', {
+    email: 'nine.step.student@example.com',
+    password: 'password123',
+    role: 'STUDENT',
+    full_name: 'Nine Step Student'
+  });
+  const login = await request('/api/v1/auth/login', {
+    identifier: 'nine.step.student@example.com',
+    password: 'password123'
+  });
+  const headers = { authorization: `Bearer ${login.body.access_token}`, 'content-type': 'application/json' };
+  const save = (section, body) => fetch(`${baseUrl}/api/student/profile/${section}`, {
+    method: 'PUT', headers, body: JSON.stringify(body)
+  });
+
+  let response = await save('personal', {
+    firstName:'Nine', lastName:'Student', profilePhoto:'', dateOfBirth:'2003-04-10', gender:'Female',
+    nationality:'Indian', country:'India', state:'Tamil Nadu', city:'Chennai', address:'Anna Nagar',
+    phoneNumber:'+919876543210', passportStatus:'Available', passportNumber:'P1234567', shortBio:'Aspiring data scientist.'
+  });
+  let body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.data.profileCompletionPercentage, 20);
+
+  response = await save('education', {
+    studentType:'COLLEGE', graduationYear:2027,
+    college:{ collegeName:'Madras College', university:'State University', degree:'B.Tech', department:'Computer Science', cgpa:8.7, currentSemester:'6', numberOfBacklogs:0, projects:['ML project'], internships:['Data internship'], academicAchievements:['Dean list'] }
+  });
+  assert.equal(response.status, 200);
+  response = await save('preferences', {
+    preferredCountries:['Canada','UK'], preferredCourses:['Data Science'], degreeType:'Masters',
+    preferredIntake:'Fall 2027', budgetRange:'₹25–40 lakh', scholarshipRequired:true, accommodationRequired:true
+  });
+  assert.equal(response.status, 200);
+  response = await save('exams', { exams:[{ examType:'IELTS', examTaken:true, score:7.5, examDate:'2026-05-01' }] });
+  assert.equal(response.status, 200);
+  response = await save('skills', {
+    technicalSkills:['Python'], softSkills:['Communication'], languagesKnown:['English','Tamil'],
+    certifications:[], hackathons:[], competitions:[], volunteerExperience:[], leadershipExperience:[],
+    portfolioUrl:'https://example.com', linkedInUrl:'https://linkedin.com/in/student', githubUrl:'https://github.com/student'
+  });
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.data.profileCompletionPercentage, 90);
+
+  const form = new FormData();
+  form.append('documentType', 'ACADEMIC_TRANSCRIPT');
+  form.append('file', new Blob(['sample transcript'], { type:'application/pdf' }), 'transcript.pdf');
+  response = await fetch(`${baseUrl}/api/student/profile/documents`, {
+    method:'POST', headers:{ authorization:headers.authorization }, body:form
+  });
+  body = await response.json();
+  assert.equal(response.status, 201);
+  assert.equal(body.data.profile.profileCompletionPercentage, 100);
+  assert.equal(body.data.profile.profileComplete, true);
+
+  response = await fetch(`${baseUrl}/api/student/profile/completion`, { headers:{ authorization:headers.authorization } });
+  body = await response.json();
+  assert.equal(body.data.profileCompletionPercentage, 100);
+  assert.equal(body.data.sections.documents, true);
+});
+
 test('validates registration email, password, and public role', async () => {
   const invalidEmail = await request('/api/v1/auth/register', {
     email: 'not-an-email',

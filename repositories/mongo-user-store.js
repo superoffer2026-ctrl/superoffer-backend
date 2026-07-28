@@ -68,6 +68,26 @@ export class MongoUserStore {
     return structuredClone({ ...profile, userId });
   }
 
+  async updateStudentProfileSection(userId, section, value) {
+    const now = new Date().toISOString();
+    await this.studentProfiles.updateOne(
+      { userId },
+      { $set: { [section]: value, updatedAt: now }, $setOnInsert: { userId, documents: [], createdAt: now } },
+      { upsert: true }
+    );
+    return this.findStudentProfile(userId);
+  }
+
+  async addStudentDocument(userId, document) {
+    const now = new Date().toISOString();
+    await this.studentProfiles.updateOne(
+      { userId },
+      { $push: { documents: document }, $set: { updatedAt: now }, $setOnInsert: { userId, createdAt: now } },
+      { upsert: true }
+    );
+    return this.findStudentProfile(userId);
+  }
+
   async findStudentOffers(userId) {
     return this.client.db(this.databaseName).collection('offers').find(
       { $or: [{ studentUserId: userId }, { student_user_id: userId }, { userId }] },

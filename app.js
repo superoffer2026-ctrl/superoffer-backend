@@ -5,6 +5,8 @@ import swaggerUi from 'swagger-ui-express';
 import { openApiDocument } from './config/swagger.js';
 import { InMemoryUserStore } from './repositories/user-store.js';
 import { createToken, hashPassword, verifyPassword, verifyToken } from './utilities/security.js';
+import { createStudentProfileRouter } from './routes/student-profile.routes.js';
+import { completionFor } from './services/student-profile.service.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -108,6 +110,8 @@ export const createApp = ({
     request.auth = claims;
     next();
   };
+
+  app.use('/api/student/profile', createStudentProfileRouter({ userStore, requireAccessToken }));
 
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok', service: 'superoffer-auth', timestamp: new Date().toISOString() });
@@ -460,7 +464,8 @@ export const createApp = ({
         return response.status(403).json({ code: 'STUDENT_ACCESS_REQUIRED', message: 'A student account is required' });
       }
       const profile = await userStore.findStudentProfile?.(user.id);
-      if (!profile?.profile_complete) {
+      const profileIsComplete = profile?.profileComplete || profile?.profile_complete || completionFor(profile || {}).profileComplete;
+      if (!profileIsComplete) {
         return response.status(409).json({
           code: 'STUDENT_PROFILE_INCOMPLETE',
           message: 'Complete your student profile before viewing offers',
@@ -480,7 +485,11 @@ export const createApp = ({
 
   app.use((error, _request, response, _next) => {
     logger.error(error);
-    response.status(500).json({ code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' });
+    response.status(error.status || 500).json({
+      success:false,
+      code:error.code || 'INTERNAL_SERVER_ERROR',
+      message:error.status ? error.message : 'An unexpected error occurred'
+    });
   });
 
   return { app, userStore };
