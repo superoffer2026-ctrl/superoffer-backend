@@ -44,6 +44,7 @@ const normalizeOrigin = origin => String(origin || '').trim().replace(/\/+$/, ''
 
 export const createApp = ({
   userStore = new InMemoryUserStore(),
+  persistence = 'memory',
   tokenSecret = process.env.AUTH_TOKEN_SECRET || 'development-only-secret-change-before-deploying',
   accessTokenTtl = Number(process.env.ACCESS_TOKEN_TTL_SECONDS) || 3600,
   refreshTokenTtl = Number(process.env.REFRESH_TOKEN_TTL_SECONDS) || 2_592_000,
@@ -114,7 +115,12 @@ export const createApp = ({
   app.use('/api/student/profile', createStudentProfileRouter({ userStore, requireAccessToken }));
 
   app.get('/health', (_request, response) => {
-    response.json({ status: 'ok', service: 'superoffer-auth', timestamp: new Date().toISOString() });
+    response.json({
+      status: 'ok',
+      service: 'superoffer-auth',
+      persistence,
+      timestamp: new Date().toISOString()
+    });
   });
 
   app.post('/api/v1/auth/register', async (request, response, next) => {
