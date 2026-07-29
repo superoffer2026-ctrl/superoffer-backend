@@ -13,6 +13,29 @@ const INSTITUTION_ROLES = new Set(['UNIVERSITY_OFFICER', 'LOAN_OFFICER', 'CONSUL
 const APPROVAL_STATUSES = new Set(['APPROVED', 'REJECTED']);
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000;
+const STUDENT_PROFILE_FIELDS = [
+  profile => profile.date_of_birth,
+  profile => profile.nationality,
+  profile => profile.location,
+  profile => profile.academic_records?.[0]?.institution_name,
+  profile => profile.academic_records?.[0]?.qualification,
+  profile => profile.academic_records?.[0]?.score_raw,
+  profile => profile.academic_records?.[0]?.graduation_year,
+  profile => profile.test_scores?.[0]?.test_type,
+  profile => profile.test_scores?.[0]?.score,
+  profile => profile.preferences?.target_countries?.length,
+  profile => profile.preferences?.target_courses?.length,
+  profile => profile.preferences?.degree_level,
+  profile => profile.preferences?.intake_term,
+  profile => profile.preferences?.budget_band,
+  profile => typeof profile.preferences?.scholarship_need === 'boolean',
+  profile => profile.financial?.funding_source,
+  profile => typeof profile.visibility?.visible_to_universities === 'boolean',
+  profile => typeof profile.visibility?.visible_to_loan_providers === 'boolean'
+];
+const studentProfileCompletion = profile => Math.round(
+  STUDENT_PROFILE_FIELDS.filter(hasValue => Boolean(hasValue(profile))).length / STUDENT_PROFILE_FIELDS.length * 100
+);
 
 const normalizeEmail = email => String(email || '').trim().toLowerCase();
 const normalizeOrigin = origin => String(origin || '').trim().replace(/\/+$/, '');
@@ -384,7 +407,8 @@ export const createApp = ({
         initials: name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join(''),
         email: user.email,
         phone: user.phone || '',
-        completion_percent: profile?.completion_percent || 20,
+        completion_percent: profile?.completion_percent || 0,
+        profile_complete: Boolean(profile?.profile_complete),
         preferences: profile?.preferences || {
           target_countries: [],
           target_courses: [],
@@ -397,11 +421,51 @@ export const createApp = ({
     }
   });
 
+  app.put('/api/v1/students/me', requireAccessToken, async (request, response, next) => {
+    try {
+      const user = await userStore.findById(request.auth.sub);
+      if (!user || user.role !== 'STUDENT') {
+        return response.status(403).json({ code: 'STUDENT_ACCESS_REQUIRED', message: 'A student account is required' });
+      }
+      const current = await userStore.findStudentProfile?.(user.id) || {};
+      const allowed = ['date_of_birth', 'nationality', 'location', 'academic_records', 'test_scores', 'preferences', 'financial', 'visibility'];
+      const changes = Object.fromEntries(allowed.filter(key => request.body[key] !== undefined).map(key => [key, request.body[key]]));
+      const profile = { ...current, ...changes };
+      const completionPercent = studentProfileCompletion(profile);
+      const saved = {
+        ...profile,
+        userId: user.id,
+        name: user.fullName,
+        email: user.email,
+        phone: user.phone || '',
+        completion_percent: completionPercent,
+        profile_complete: completionPercent === 100,
+        updated_at: new Date().toISOString(),
+        created_at: current.created_at || new Date().toISOString()
+      };
+      if (!userStore.upsertStudentProfile) {
+        return response.status(501).json({ code: 'PROFILE_STORE_UNAVAILABLE', message: 'Student profile storage is unavailable' });
+      }
+      await userStore.upsertStudentProfile(user.id, saved);
+      response.json({ ...saved, user_id: user.id, source: 'mongodb' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get('/api/v1/students/me/offers', requireAccessToken, async (request, response, next) => {
     try {
       const user = await userStore.findById(request.auth.sub);
       if (!user || user.role !== 'STUDENT') {
         return response.status(403).json({ code: 'STUDENT_ACCESS_REQUIRED', message: 'A student account is required' });
+      }
+      const profile = await userStore.findStudentProfile?.(user.id);
+      if (!profile?.profile_complete) {
+        return response.status(409).json({
+          code: 'STUDENT_PROFILE_INCOMPLETE',
+          message: 'Complete your student profile before viewing offers',
+          completion_percent: profile?.completion_percent || 0
+        });
       }
       const offers = await userStore.findStudentOffers?.(user.id) || [];
       response.json({ results: offers, total_results: offers.length, source: 'mongodb' });

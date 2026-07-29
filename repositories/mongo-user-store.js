@@ -10,13 +10,16 @@ export class MongoUserStore {
     });
     this.databaseName = databaseName;
     this.users = null;
+    this.studentProfiles = null;
   }
 
   async connect() {
     await this.client.connect();
     this.users = this.client.db(this.databaseName).collection('users');
+    this.studentProfiles = this.client.db(this.databaseName).collection('student_profiles');
     await this.users.createIndex({ email: 1 }, { unique: true });
     await this.users.createIndex({ id: 1 }, { unique: true });
+    await this.studentProfiles.createIndex({ userId: 1 }, { unique: true });
     return this;
   }
 
@@ -54,10 +57,15 @@ export class MongoUserStore {
   }
 
   async findStudentProfile(userId) {
-    return this.client.db(this.databaseName).collection('students').findOne(
-      { $or: [{ userId }, { user_id: userId }] },
-      { projection: { _id: 0 } }
-    );
+    const profile = await this.studentProfiles.findOne({ userId }, { projection: { _id: 0 } });
+    if (profile) return profile;
+    return this.client.db(this.databaseName).collection('students')
+      .findOne({ $or: [{ userId }, { user_id: userId }] }, { projection: { _id: 0 } });
+  }
+
+  async upsertStudentProfile(userId, profile) {
+    await this.studentProfiles.replaceOne({ userId }, { ...profile, userId }, { upsert: true });
+    return structuredClone({ ...profile, userId });
   }
 
   async findStudentOffers(userId) {

@@ -128,6 +128,35 @@ test('returns the student portal profile and offers expected by the frontend', a
   assert.equal(profile.source, 'mongodb');
   assert.ok(Array.isArray(profile.preferences.target_countries));
 
+  const blockedOffersResponse = await fetch(`${baseUrl}/api/v1/students/me/offers`, { headers: authHeaders });
+  assert.equal(blockedOffersResponse.status, 409);
+
+  const savedProfileResponse = await fetch(`${baseUrl}/api/v1/students/me`, {
+    method: 'PUT',
+    headers: { ...authHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      date_of_birth: '2002-06-12',
+      nationality: 'Indian',
+      location: 'Mumbai, India',
+      academic_records: [{ institution_name: 'Mumbai Institute', qualification: 'B.Tech Computer Science', score_raw: '8.8 / 10', graduation_year: 2025 }],
+      test_scores: [{ test_type: 'IELTS', score: '7.5' }],
+      preferences: {
+        target_countries: ['Canada'],
+        target_courses: ['Data Science'],
+        degree_level: 'Masters',
+        intake_term: 'Fall 2027',
+        budget_band: '₹25–40 lakh',
+        scholarship_need: true
+      },
+      financial: { funding_source: 'Education loan' },
+      visibility: { visible: true, visible_to_universities: true, visible_to_loan_providers: true }
+    })
+  });
+  const savedProfile = await savedProfileResponse.json();
+  assert.equal(savedProfileResponse.status, 200);
+  assert.equal(savedProfile.profile_complete, true);
+  assert.equal(savedProfile.completion_percent, 100);
+
   const offersResponse = await fetch(`${baseUrl}/api/v1/students/me/offers`, { headers: authHeaders });
   const offers = await offersResponse.json();
   assert.equal(offersResponse.status, 200);

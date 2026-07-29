@@ -1,6 +1,7 @@
 export class InMemoryUserStore {
   constructor() {
     this.usersByEmail = new Map();
+    this.studentProfiles = new Map();
   }
 
   async findByEmail(email) {
@@ -28,8 +29,13 @@ export class InMemoryUserStore {
     return structuredClone(user);
   }
 
-  async findStudentProfile() {
-    return null;
+  async findStudentProfile(userId) {
+    return structuredClone(this.studentProfiles.get(userId) || null);
+  }
+
+  async upsertStudentProfile(userId, profile) {
+    this.studentProfiles.set(userId, structuredClone(profile));
+    return structuredClone(profile);
   }
 
   async findStudentOffers() {
