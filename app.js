@@ -114,8 +114,6 @@ export const createApp = ({
 
   const studentProfileRouter = createStudentProfileRouter({ userStore, requireAccessToken });
   app.use('/api/v1/student/profile', studentProfileRouter);
-  // Keep the original route working for older clients while the frontend uses
-  // the versioned API base advertised by this service.
   app.use('/api/student/profile', studentProfileRouter);
 
   app.get('/health', (_request, response) => {
@@ -212,7 +210,27 @@ export const createApp = ({
     try {
       const email = normalizeEmail(request.body.identifier);
       const password = String(request.body.password || '');
+      const requestIp = String(request.headers['x-forwarded-for'] || request.socket?.remoteAddress || '').split(',')[0].trim();
+      const userAgent = String(request.get('user-agent') || 'Unknown device').slice(0, 240);
+      const recordLogin = async ({ outcome, user = null, reason = '' }) => {
+        await userStore.appendAuditLog?.({
+          id:crypto.randomUUID(),
+          actorUserId:user?.id || null,
+          action:`AUTH_LOGIN_${outcome}`,
+          entityType:'AUTHENTICATION',
+          entityId:user?.id || email || 'UNKNOWN',
+          organizationName:user?.organization?.name || null,
+          email:email || null,
+          role:user?.role || null,
+          outcome,
+          reason,
+          ipAddress:requestIp || 'Unknown',
+          userAgent,
+          occurredAt:new Date().toISOString()
+        });
+      };
       if (!email || !password) {
+        await recordLogin({ outcome:'FAILED', reason:'Missing email or password' });
         return response.status(400).json({
           code: 'VALIDATION_ERROR',
           message: 'Email and password are required'
@@ -221,11 +239,13 @@ export const createApp = ({
 
       const user = await userStore.findByEmail(email);
       if (!user) {
+        await recordLogin({ outcome:'FAILED', reason:'Invalid credentials' });
         return response.status(401).json({ code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
       }
 
       const lockedUntil = user.lockedUntil ? new Date(user.lockedUntil).getTime() : 0;
       if (lockedUntil > Date.now()) {
+        await recordLogin({ outcome:'BLOCKED', user, reason:'Account locked' });
         return response.status(423).json({
           code: 'ACCOUNT_LOCKED',
           message: 'Account is temporarily locked',
@@ -241,18 +261,21 @@ export const createApp = ({
         }
         await userStore.update(user);
         if (user.lockedUntil) {
+          await recordLogin({ outcome:'BLOCKED', user, reason:'Failed-attempt threshold reached' });
           return response.status(423).json({
             code: 'ACCOUNT_LOCKED',
             message: 'Account is temporarily locked',
             retry_after_seconds: Math.ceil(LOCK_DURATION_MS / 1000)
           });
         }
+        await recordLogin({ outcome:'FAILED', user, reason:'Invalid credentials' });
         return response.status(401).json({ code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
       }
 
       user.approvalStatus = user.approvalStatus
         || (INSTITUTION_ROLES.has(user.role) ? 'PENDING' : 'APPROVED');
       if (user.approvalStatus === 'PENDING') {
+        await recordLogin({ outcome:'BLOCKED', user, reason:'Organisation pending approval' });
         return response.status(403).json({
           code: 'ACCOUNT_PENDING_APPROVAL',
           message: 'Your organization is still being reviewed by the SuperOffer admin team',
@@ -261,6 +284,7 @@ export const createApp = ({
         });
       }
       if (user.approvalStatus === 'REJECTED') {
+        await recordLogin({ outcome:'BLOCKED', user, reason:'Organisation registration rejected' });
         return response.status(403).json({
           code: 'ACCOUNT_REJECTED',
           message: user.rejectionReason || 'Your organization registration was not approved',
@@ -273,6 +297,7 @@ export const createApp = ({
       user.lockedUntil = null;
       user.updatedAt = new Date().toISOString();
       await userStore.update(user);
+      await recordLogin({ outcome:'SUCCESS', user });
 
       const claims = { sub: user.id, email: user.email, role: user.role };
       response.json({
@@ -450,6 +475,33 @@ export const createApp = ({
       const limit = Math.min(Math.max(requestedLimit, 1), 500);
       const entries = await userStore.listAuditLogs?.(limit) || [];
       response.json({ entries, total_results:entries.length });
+    } catch(error) { next(error); }
+  });
+
+  app.get('/api/v1/admin/auth-logs', async (request, response, next) => {
+    try {
+      if (request.get('x-admin-key') !== adminApprovalKey) {
+        return response.status(401).json({ code:'ADMIN_UNAUTHORIZED', message:'A valid admin approval key is required' });
+      }
+      const requestedLimit = Number(request.query.limit) || 200;
+      const limit = Math.min(Math.max(requestedLimit, 1), 500);
+      const outcome = String(request.query.outcome || 'ALL').toUpperCase();
+      const role = String(request.query.role || 'ALL').toUpperCase();
+      const search = String(request.query.search || '').trim().toLowerCase();
+      const allEntries = await userStore.listAuditLogs?.(500) || [];
+      const authEntries = allEntries.filter(entry => String(entry.action).startsWith('AUTH_LOGIN_'));
+      const filtered = authEntries.filter(entry =>
+        (outcome === 'ALL' || entry.outcome === outcome)
+        && (role === 'ALL' || entry.role === role)
+        && (!search || [entry.email, entry.organizationName, entry.ipAddress].some(value => String(value || '').toLowerCase().includes(search)))
+      ).slice(0, limit);
+      const count = value => authEntries.filter(entry => entry.outcome === value).length;
+      const uniqueUsers = new Set(authEntries.filter(entry => entry.outcome === 'SUCCESS').map(entry => entry.entityId)).size;
+      response.json({
+        entries:filtered,
+        total_results:filtered.length,
+        summary:{ total:authEntries.length, successful:count('SUCCESS'), failed:count('FAILED'), blocked:count('BLOCKED'), unique_users:uniqueUsers }
+      });
     } catch(error) { next(error); }
   });
 

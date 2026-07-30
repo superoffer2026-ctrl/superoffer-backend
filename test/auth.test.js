@@ -406,3 +406,18 @@ test('locks an account after five failed login attempts', async () => {
   assert.equal(result.body.code, 'ACCOUNT_LOCKED');
   assert.ok(result.body.retry_after_seconds > 0);
 });
+
+test('exposes authentication outcomes only to an authorized admin', async () => {
+  const unauthorized = await fetch(`${baseUrl}/api/v1/admin/auth-logs`);
+  assert.equal(unauthorized.status, 401);
+
+  const response = await fetch(`${baseUrl}/api/v1/admin/auth-logs?outcome=FAILED`, {
+    headers: { 'x-admin-key': 'test-admin-key' }
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(body.summary.total > 0);
+  assert.ok(body.summary.failed > 0);
+  assert.ok(body.entries.every(entry => entry.action === 'AUTH_LOGIN_FAILED'));
+  assert.ok(body.entries.every(entry => entry.ipAddress && entry.userAgent));
+});
