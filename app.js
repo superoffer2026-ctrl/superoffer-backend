@@ -5,6 +5,8 @@ import swaggerUi from 'swagger-ui-express';
 import { openApiDocument } from './config/swagger.js';
 import { InMemoryUserStore } from './repositories/user-store.js';
 import { createToken, hashPassword, verifyPassword, verifyToken } from './utilities/security.js';
+import { createStudentProfileRouter } from './routes/student-profile.routes.js';
+import { completionFor } from './services/student-profile.service.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -42,6 +44,7 @@ const normalizeOrigin = origin => String(origin || '').trim().replace(/\/+$/, ''
 
 export const createApp = ({
   userStore = new InMemoryUserStore(),
+  persistence = 'memory',
   tokenSecret = process.env.AUTH_TOKEN_SECRET || 'development-only-secret-change-before-deploying',
   accessTokenTtl = Number(process.env.ACCESS_TOKEN_TTL_SECONDS) || 3600,
   refreshTokenTtl = Number(process.env.REFRESH_TOKEN_TTL_SECONDS) || 2_592_000,
@@ -109,8 +112,19 @@ export const createApp = ({
     next();
   };
 
+  const studentProfileRouter = createStudentProfileRouter({ userStore, requireAccessToken });
+  app.use('/api/v1/student/profile', studentProfileRouter);
+  // Keep the original route working for older clients while the frontend uses
+  // the versioned API base advertised by this service.
+  app.use('/api/student/profile', studentProfileRouter);
+
   app.get('/health', (_request, response) => {
-    response.json({ status: 'ok', service: 'superoffer-auth', timestamp: new Date().toISOString() });
+    response.json({
+      status: 'ok',
+      service: 'superoffer-auth',
+      persistence,
+      timestamp: new Date().toISOString()
+    });
   });
 
   app.post('/api/v1/auth/register', async (request, response, next) => {
@@ -327,13 +341,21 @@ export const createApp = ({
       }
       const requestedStatus = String(request.query.status || 'PENDING').toUpperCase();
       const approvalStatus = requestedStatus === 'ALL' ? '' : requestedStatus;
+      const requestedType = String(request.query.org_type || 'ALL').toUpperCase();
+      const roleByType = { UNIVERSITY:'UNIVERSITY_OFFICER', BANK:'LOAN_OFFICER', CONSULTANCY:'CONSULTANT' };
+      const role = requestedType === 'ALL' ? '' : roleByType[requestedType];
+      if (requestedType !== 'ALL' && !role) {
+        return response.status(400).json({ code:'VALIDATION_ERROR', message:'org_type must be UNIVERSITY, BANK, CONSULTANCY, or ALL' });
+      }
       if (approvalStatus && !new Set(['PENDING', 'APPROVED', 'REJECTED']).has(approvalStatus)) {
         return response.status(400).json({
           code: 'VALIDATION_ERROR',
           message: 'status must be PENDING, APPROVED, REJECTED, or ALL'
         });
       }
-      const registrations = await userStore.findInstitutionsByApprovalStatus(approvalStatus);
+      const registrations = await userStore.findInstitutionsByApprovalStatus(approvalStatus, role);
+      const allRegistrations = await userStore.findInstitutionsByApprovalStatus('');
+      const count = (status, itemRole = '') => allRegistrations.filter(user => user.approvalStatus === status && (!itemRole || user.role === itemRole)).length;
       response.json({
         registrations: registrations.map(user => ({
           user_id: user.id,
@@ -347,7 +369,13 @@ export const createApp = ({
           reviewed_at: user.reviewedAt || null,
           rejection_reason: user.rejectionReason || null
         })),
-        total_results: registrations.length
+        total_results: registrations.length,
+        summary: {
+          pending:count('PENDING'), approved:count('APPROVED'), rejected:count('REJECTED'),
+          universities:count('PENDING','UNIVERSITY_OFFICER'),
+          banks:count('PENDING','LOAN_OFFICER'),
+          consultancies:count('PENDING','CONSULTANT')
+        }
       });
     } catch (error) {
       next(error);
@@ -373,13 +401,35 @@ export const createApp = ({
       if (!INSTITUTION_ROLES.has(user.role)) {
         return response.status(409).json({ code: 'APPROVAL_NOT_REQUIRED', message: 'Student accounts do not require admin approval' });
       }
+      const rejectionReason = String(request.body.rejection_reason || '').trim();
+      if (approvalStatus === 'REJECTED' && !rejectionReason) {
+        return response.status(400).json({ code:'REJECTION_REASON_REQUIRED', message:'A rejection reason is required' });
+      }
+      const beforeState = {
+        approvalStatus:user.approvalStatus,
+        rejectionReason:user.rejectionReason || null,
+        reviewedAt:user.reviewedAt || null
+      };
       user.approvalStatus = approvalStatus;
       user.rejectionReason = approvalStatus === 'REJECTED'
-        ? String(request.body.rejection_reason || 'The submitted organization details could not be verified')
+        ? rejectionReason
         : null;
+      user.approvalNote = String(request.body.approval_note || '').trim() || null;
       user.reviewedAt = new Date().toISOString();
       user.updatedAt = user.reviewedAt;
       await userStore.update(user);
+      await userStore.appendAuditLog?.({
+        id:crypto.randomUUID(),
+        actorUserId:'SUPER_ADMIN',
+        action:approvalStatus === 'APPROVED' ? 'VERIFICATION_APPROVED' : 'VERIFICATION_REJECTED',
+        entityType:user.organization?.organizationType || user.role,
+        entityId:user.id,
+        organizationName:user.organization?.name || null,
+        beforeState,
+        afterState:{ approvalStatus:user.approvalStatus, rejectionReason:user.rejectionReason, reviewedAt:user.reviewedAt },
+        reason:user.rejectionReason || user.approvalNote,
+        occurredAt:user.reviewedAt
+      });
       response.json({
         user_id: user.id,
         approval_status: user.approvalStatus,
@@ -389,6 +439,18 @@ export const createApp = ({
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get('/api/v1/admin/audit-log', async (request, response, next) => {
+    try {
+      if (request.get('x-admin-key') !== adminApprovalKey) {
+        return response.status(401).json({ code:'ADMIN_UNAUTHORIZED', message:'A valid admin approval key is required' });
+      }
+      const requestedLimit = Number(request.query.limit) || 100;
+      const limit = Math.min(Math.max(requestedLimit, 1), 500);
+      const entries = await userStore.listAuditLogs?.(limit) || [];
+      response.json({ entries, total_results:entries.length });
+    } catch(error) { next(error); }
   });
 
   app.get('/api/v1/students/me', requireAccessToken, async (request, response, next) => {
@@ -460,7 +522,8 @@ export const createApp = ({
         return response.status(403).json({ code: 'STUDENT_ACCESS_REQUIRED', message: 'A student account is required' });
       }
       const profile = await userStore.findStudentProfile?.(user.id);
-      if (!profile?.profile_complete) {
+      const profileIsComplete = profile?.profileComplete || profile?.profile_complete || completionFor(profile || {}).profileComplete;
+      if (!profileIsComplete) {
         return response.status(409).json({
           code: 'STUDENT_PROFILE_INCOMPLETE',
           message: 'Complete your student profile before viewing offers',
@@ -480,7 +543,11 @@ export const createApp = ({
 
   app.use((error, _request, response, _next) => {
     logger.error(error);
-    response.status(500).json({ code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' });
+    response.status(error.status || 500).json({
+      success:false,
+      code:error.code || 'INTERNAL_SERVER_ERROR',
+      message:error.status ? error.message : 'An unexpected error occurred'
+    });
   });
 
   return { app, userStore };

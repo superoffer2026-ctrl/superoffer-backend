@@ -27,7 +27,7 @@ if (mongodbUri) {
   }
 }
 
-const { app } = createApp({ userStore });
+const { app } = createApp({ userStore, persistence });
 
 const server = app.listen(port, host, () => {
   console.info(JSON.stringify({
