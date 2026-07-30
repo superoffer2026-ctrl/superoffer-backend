@@ -61,8 +61,12 @@ test('serves backend information at the root URL', async () => {
   assert.equal(body.documentation, '/api-docs');
 });
 
-test('allows registration requests from the production frontend origins', async () => {
-  for (const origin of ['https://superoffer.net', 'https://www.superoffer.net']) {
+test('allows registration requests from production and local frontend origins', async () => {
+  for (const origin of [
+    'https://superoffer.net',
+    'https://www.superoffer.net',
+    'http://localhost:4200'
+  ]) {
     const response = await fetch(`${baseUrl}/api/v1/auth/register`, {
       method: 'OPTIONS',
       headers: {

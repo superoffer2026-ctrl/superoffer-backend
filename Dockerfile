@@ -10,6 +10,7 @@ COPY config ./config
 COPY data ./data
 COPY repositories ./repositories
 COPY utilities ./utilities
+COPY student-profile ./student-profile
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0

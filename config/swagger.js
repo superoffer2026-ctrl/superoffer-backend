@@ -19,7 +19,8 @@ export const openApiDocument = {
     { name: 'Health', description: 'Service availability' },
     { name: 'Authentication', description: 'Account registration, login, and approval status' },
     { name: 'Admin', description: 'Institution approval operations' },
-    { name: 'Student portal', description: 'Authenticated student portal data' }
+    { name: 'Student portal', description: 'Authenticated student portal data' },
+    { name: 'Student profile', description: 'Student onboarding, financial preferences, documents, and submission' }
   ],
   paths: {
     '/': {
@@ -294,9 +295,38 @@ export const openApiDocument = {
           }
         }
       }
+    },
+    '/api/v1/student/profile': {
+      get: { tags: ['Student profile'], summary: 'Get my complete profile', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Profile, completion, and document metadata' } } },
+      post: { tags: ['Student profile'], summary: 'Create my profile', security: [{ bearerAuth: [] }], responses: { 201: { description: 'Profile created' }, 409: { description: 'Profile already exists' } } },
+      patch: { tags: ['Student profile'], summary: 'Update my profile', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Profile updated' } } }
+    },
+    '/api/v1/student/profile/completion': {
+      get: { tags: ['Student profile'], summary: 'Get profile completion status', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Section completion and readiness' } } }
+    },
+    '/api/v1/student/profile/financial': {
+      get: { tags: ['Student profile'], summary: 'Get financial preferences', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Financial preferences' } } },
+      put: { tags: ['Student profile'], summary: 'Create or update financial preferences', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Financial preferences saved' } } }
+    },
+    '/api/v1/student/profile/documents': {
+      get: { tags: ['Student profile'], summary: 'List my documents', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Document metadata list' } } },
+      post: { tags: ['Student profile'], summary: 'Upload a document', security: [{ bearerAuth: [] }], requestBody: { required: true, content: { 'multipart/form-data': { schema: { type: 'object', required: ['documentType', 'file'], properties: { documentType: { type: 'string' }, file: { type: 'string', format: 'binary' } } } } } }, responses: { 201: { description: 'Document stored in GridFS' }, 413: { description: 'File exceeds 10 MB' }, 415: { description: 'Unsupported file type' } } }
+    },
+    '/api/v1/student/profile/documents/{documentId}': {
+      put: { tags: ['Student profile'], summary: 'Replace my document', security: [{ bearerAuth: [] }], parameters: [{ name: 'documentId', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Document replaced' } } },
+      delete: { tags: ['Student profile'], summary: 'Delete my document', security: [{ bearerAuth: [] }], parameters: [{ name: 'documentId', in: 'path', required: true, schema: { type: 'string' } }], responses: { 204: { description: 'Document deleted' } } }
+    },
+    '/api/v1/student/profile/documents/{documentId}/content': {
+      get: { tags: ['Student profile'], summary: 'Retrieve my document content', security: [{ bearerAuth: [] }], parameters: [{ name: 'documentId', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Protected document stream' }, 404: { description: 'Document not found or not owned by student' } } }
+    },
+    '/api/v1/student/profile/submit': {
+      post: { tags: ['Student profile'], summary: 'Submit completed profile', security: [{ bearerAuth: [] }], responses: { 200: { description: 'Profile submitted' }, 422: { description: 'Profile is incomplete' } } }
     }
   },
   components: {
+    securitySchemes: {
+      bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }
+    },
     schemas: {
       HealthResponse: {
         type: 'object',

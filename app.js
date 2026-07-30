@@ -5,6 +5,7 @@ import swaggerUi from 'swagger-ui-express';
 import { openApiDocument } from './config/swagger.js';
 import { InMemoryUserStore } from './repositories/user-store.js';
 import { createToken, hashPassword, verifyPassword, verifyToken } from './utilities/security.js';
+import { createStudentProfileRouter } from './student-profile/student-profile.routes.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -108,6 +109,8 @@ export const createApp = ({
     request.auth = claims;
     next();
   };
+
+  app.use('/api/v1/student/profile', createStudentProfileRouter({ userStore, requireAccessToken }));
 
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok', service: 'superoffer-auth', timestamp: new Date().toISOString() });
@@ -479,8 +482,21 @@ export const createApp = ({
   });
 
   app.use((error, _request, response, _next) => {
-    logger.error(error);
-    response.status(500).json({ code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' });
+    const status = Number(error.status) || (error.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
+    logger.error(JSON.stringify({
+      level: 'error',
+      event: 'api_error',
+      status,
+      code: error.code || 'UNHANDLED_ERROR',
+      message: status === 500 ? 'Internal request failure' : error.message,
+      timestamp: new Date().toISOString()
+    }));
+    response.status(status).json({
+      code: status === 413 ? 'FILE_TOO_LARGE'
+        : status === 415 ? 'UNSUPPORTED_FILE_TYPE'
+        : 'INTERNAL_SERVER_ERROR',
+      message: status === 500 ? 'An unexpected error occurred' : error.message
+    });
   });
 
   return { app, userStore };
