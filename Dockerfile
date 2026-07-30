@@ -10,10 +10,6 @@ COPY config ./config
 COPY data ./data
 COPY repositories ./repositories
 COPY utilities ./utilities
-COPY controllers ./controllers
-COPY routes ./routes
-COPY services ./services
-COPY validation ./validation
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0

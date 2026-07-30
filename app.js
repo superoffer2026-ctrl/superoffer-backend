@@ -5,8 +5,6 @@ import swaggerUi from 'swagger-ui-express';
 import { openApiDocument } from './config/swagger.js';
 import { InMemoryUserStore } from './repositories/user-store.js';
 import { createToken, hashPassword, verifyPassword, verifyToken } from './utilities/security.js';
-import { createStudentProfileRouter } from './routes/student-profile.routes.js';
-import { completionFor } from './services/student-profile.service.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -44,7 +42,6 @@ const normalizeOrigin = origin => String(origin || '').trim().replace(/\/+$/, ''
 
 export const createApp = ({
   userStore = new InMemoryUserStore(),
-  persistence = 'memory',
   tokenSecret = process.env.AUTH_TOKEN_SECRET || 'development-only-secret-change-before-deploying',
   accessTokenTtl = Number(process.env.ACCESS_TOKEN_TTL_SECONDS) || 3600,
   refreshTokenTtl = Number(process.env.REFRESH_TOKEN_TTL_SECONDS) || 2_592_000,
@@ -112,17 +109,8 @@ export const createApp = ({
     next();
   };
 
-  const studentProfileRouter = createStudentProfileRouter({ userStore, requireAccessToken });
-  app.use('/api/v1/student/profile', studentProfileRouter);
-  app.use('/api/student/profile', studentProfileRouter);
-
   app.get('/health', (_request, response) => {
-    response.json({
-      status: 'ok',
-      service: 'superoffer-auth',
-      persistence,
-      timestamp: new Date().toISOString()
-    });
+    response.json({ status: 'ok', service: 'superoffer-auth', timestamp: new Date().toISOString() });
   });
 
   app.post('/api/v1/auth/register', async (request, response, next) => {
@@ -210,27 +198,7 @@ export const createApp = ({
     try {
       const email = normalizeEmail(request.body.identifier);
       const password = String(request.body.password || '');
-      const requestIp = String(request.headers['x-forwarded-for'] || request.socket?.remoteAddress || '').split(',')[0].trim();
-      const userAgent = String(request.get('user-agent') || 'Unknown device').slice(0, 240);
-      const recordLogin = async ({ outcome, user = null, reason = '' }) => {
-        await userStore.appendAuditLog?.({
-          id:crypto.randomUUID(),
-          actorUserId:user?.id || null,
-          action:`AUTH_LOGIN_${outcome}`,
-          entityType:'AUTHENTICATION',
-          entityId:user?.id || email || 'UNKNOWN',
-          organizationName:user?.organization?.name || null,
-          email:email || null,
-          role:user?.role || null,
-          outcome,
-          reason,
-          ipAddress:requestIp || 'Unknown',
-          userAgent,
-          occurredAt:new Date().toISOString()
-        });
-      };
       if (!email || !password) {
-        await recordLogin({ outcome:'FAILED', reason:'Missing email or password' });
         return response.status(400).json({
           code: 'VALIDATION_ERROR',
           message: 'Email and password are required'
@@ -239,13 +207,11 @@ export const createApp = ({
 
       const user = await userStore.findByEmail(email);
       if (!user) {
-        await recordLogin({ outcome:'FAILED', reason:'Invalid credentials' });
         return response.status(401).json({ code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
       }
 
       const lockedUntil = user.lockedUntil ? new Date(user.lockedUntil).getTime() : 0;
       if (lockedUntil > Date.now()) {
-        await recordLogin({ outcome:'BLOCKED', user, reason:'Account locked' });
         return response.status(423).json({
           code: 'ACCOUNT_LOCKED',
           message: 'Account is temporarily locked',
@@ -261,21 +227,18 @@ export const createApp = ({
         }
         await userStore.update(user);
         if (user.lockedUntil) {
-          await recordLogin({ outcome:'BLOCKED', user, reason:'Failed-attempt threshold reached' });
           return response.status(423).json({
             code: 'ACCOUNT_LOCKED',
             message: 'Account is temporarily locked',
             retry_after_seconds: Math.ceil(LOCK_DURATION_MS / 1000)
           });
         }
-        await recordLogin({ outcome:'FAILED', user, reason:'Invalid credentials' });
         return response.status(401).json({ code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
       }
 
       user.approvalStatus = user.approvalStatus
         || (INSTITUTION_ROLES.has(user.role) ? 'PENDING' : 'APPROVED');
       if (user.approvalStatus === 'PENDING') {
-        await recordLogin({ outcome:'BLOCKED', user, reason:'Organisation pending approval' });
         return response.status(403).json({
           code: 'ACCOUNT_PENDING_APPROVAL',
           message: 'Your organization is still being reviewed by the SuperOffer admin team',
@@ -284,7 +247,6 @@ export const createApp = ({
         });
       }
       if (user.approvalStatus === 'REJECTED') {
-        await recordLogin({ outcome:'BLOCKED', user, reason:'Organisation registration rejected' });
         return response.status(403).json({
           code: 'ACCOUNT_REJECTED',
           message: user.rejectionReason || 'Your organization registration was not approved',
@@ -297,7 +259,6 @@ export const createApp = ({
       user.lockedUntil = null;
       user.updatedAt = new Date().toISOString();
       await userStore.update(user);
-      await recordLogin({ outcome:'SUCCESS', user });
 
       const claims = { sub: user.id, email: user.email, role: user.role };
       response.json({
@@ -366,21 +327,13 @@ export const createApp = ({
       }
       const requestedStatus = String(request.query.status || 'PENDING').toUpperCase();
       const approvalStatus = requestedStatus === 'ALL' ? '' : requestedStatus;
-      const requestedType = String(request.query.org_type || 'ALL').toUpperCase();
-      const roleByType = { UNIVERSITY:'UNIVERSITY_OFFICER', BANK:'LOAN_OFFICER', CONSULTANCY:'CONSULTANT' };
-      const role = requestedType === 'ALL' ? '' : roleByType[requestedType];
-      if (requestedType !== 'ALL' && !role) {
-        return response.status(400).json({ code:'VALIDATION_ERROR', message:'org_type must be UNIVERSITY, BANK, CONSULTANCY, or ALL' });
-      }
       if (approvalStatus && !new Set(['PENDING', 'APPROVED', 'REJECTED']).has(approvalStatus)) {
         return response.status(400).json({
           code: 'VALIDATION_ERROR',
           message: 'status must be PENDING, APPROVED, REJECTED, or ALL'
         });
       }
-      const registrations = await userStore.findInstitutionsByApprovalStatus(approvalStatus, role);
-      const allRegistrations = await userStore.findInstitutionsByApprovalStatus('');
-      const count = (status, itemRole = '') => allRegistrations.filter(user => user.approvalStatus === status && (!itemRole || user.role === itemRole)).length;
+      const registrations = await userStore.findInstitutionsByApprovalStatus(approvalStatus);
       response.json({
         registrations: registrations.map(user => ({
           user_id: user.id,
@@ -394,13 +347,7 @@ export const createApp = ({
           reviewed_at: user.reviewedAt || null,
           rejection_reason: user.rejectionReason || null
         })),
-        total_results: registrations.length,
-        summary: {
-          pending:count('PENDING'), approved:count('APPROVED'), rejected:count('REJECTED'),
-          universities:count('PENDING','UNIVERSITY_OFFICER'),
-          banks:count('PENDING','LOAN_OFFICER'),
-          consultancies:count('PENDING','CONSULTANT')
-        }
+        total_results: registrations.length
       });
     } catch (error) {
       next(error);
@@ -426,35 +373,13 @@ export const createApp = ({
       if (!INSTITUTION_ROLES.has(user.role)) {
         return response.status(409).json({ code: 'APPROVAL_NOT_REQUIRED', message: 'Student accounts do not require admin approval' });
       }
-      const rejectionReason = String(request.body.rejection_reason || '').trim();
-      if (approvalStatus === 'REJECTED' && !rejectionReason) {
-        return response.status(400).json({ code:'REJECTION_REASON_REQUIRED', message:'A rejection reason is required' });
-      }
-      const beforeState = {
-        approvalStatus:user.approvalStatus,
-        rejectionReason:user.rejectionReason || null,
-        reviewedAt:user.reviewedAt || null
-      };
       user.approvalStatus = approvalStatus;
       user.rejectionReason = approvalStatus === 'REJECTED'
-        ? rejectionReason
+        ? String(request.body.rejection_reason || 'The submitted organization details could not be verified')
         : null;
-      user.approvalNote = String(request.body.approval_note || '').trim() || null;
       user.reviewedAt = new Date().toISOString();
       user.updatedAt = user.reviewedAt;
       await userStore.update(user);
-      await userStore.appendAuditLog?.({
-        id:crypto.randomUUID(),
-        actorUserId:'SUPER_ADMIN',
-        action:approvalStatus === 'APPROVED' ? 'VERIFICATION_APPROVED' : 'VERIFICATION_REJECTED',
-        entityType:user.organization?.organizationType || user.role,
-        entityId:user.id,
-        organizationName:user.organization?.name || null,
-        beforeState,
-        afterState:{ approvalStatus:user.approvalStatus, rejectionReason:user.rejectionReason, reviewedAt:user.reviewedAt },
-        reason:user.rejectionReason || user.approvalNote,
-        occurredAt:user.reviewedAt
-      });
       response.json({
         user_id: user.id,
         approval_status: user.approvalStatus,
@@ -464,45 +389,6 @@ export const createApp = ({
     } catch (error) {
       next(error);
     }
-  });
-
-  app.get('/api/v1/admin/audit-log', async (request, response, next) => {
-    try {
-      if (request.get('x-admin-key') !== adminApprovalKey) {
-        return response.status(401).json({ code:'ADMIN_UNAUTHORIZED', message:'A valid admin approval key is required' });
-      }
-      const requestedLimit = Number(request.query.limit) || 100;
-      const limit = Math.min(Math.max(requestedLimit, 1), 500);
-      const entries = await userStore.listAuditLogs?.(limit) || [];
-      response.json({ entries, total_results:entries.length });
-    } catch(error) { next(error); }
-  });
-
-  app.get('/api/v1/admin/auth-logs', async (request, response, next) => {
-    try {
-      if (request.get('x-admin-key') !== adminApprovalKey) {
-        return response.status(401).json({ code:'ADMIN_UNAUTHORIZED', message:'A valid admin approval key is required' });
-      }
-      const requestedLimit = Number(request.query.limit) || 200;
-      const limit = Math.min(Math.max(requestedLimit, 1), 500);
-      const outcome = String(request.query.outcome || 'ALL').toUpperCase();
-      const role = String(request.query.role || 'ALL').toUpperCase();
-      const search = String(request.query.search || '').trim().toLowerCase();
-      const allEntries = await userStore.listAuditLogs?.(500) || [];
-      const authEntries = allEntries.filter(entry => String(entry.action).startsWith('AUTH_LOGIN_'));
-      const filtered = authEntries.filter(entry =>
-        (outcome === 'ALL' || entry.outcome === outcome)
-        && (role === 'ALL' || entry.role === role)
-        && (!search || [entry.email, entry.organizationName, entry.ipAddress].some(value => String(value || '').toLowerCase().includes(search)))
-      ).slice(0, limit);
-      const count = value => authEntries.filter(entry => entry.outcome === value).length;
-      const uniqueUsers = new Set(authEntries.filter(entry => entry.outcome === 'SUCCESS').map(entry => entry.entityId)).size;
-      response.json({
-        entries:filtered,
-        total_results:filtered.length,
-        summary:{ total:authEntries.length, successful:count('SUCCESS'), failed:count('FAILED'), blocked:count('BLOCKED'), unique_users:uniqueUsers }
-      });
-    } catch(error) { next(error); }
   });
 
   app.get('/api/v1/students/me', requireAccessToken, async (request, response, next) => {
@@ -574,8 +460,7 @@ export const createApp = ({
         return response.status(403).json({ code: 'STUDENT_ACCESS_REQUIRED', message: 'A student account is required' });
       }
       const profile = await userStore.findStudentProfile?.(user.id);
-      const profileIsComplete = profile?.profileComplete || profile?.profile_complete || completionFor(profile || {}).profileComplete;
-      if (!profileIsComplete) {
+      if (!profile?.profile_complete) {
         return response.status(409).json({
           code: 'STUDENT_PROFILE_INCOMPLETE',
           message: 'Complete your student profile before viewing offers',
@@ -595,11 +480,7 @@ export const createApp = ({
 
   app.use((error, _request, response, _next) => {
     logger.error(error);
-    response.status(error.status || 500).json({
-      success:false,
-      code:error.code || 'INTERNAL_SERVER_ERROR',
-      message:error.status ? error.message : 'An unexpected error occurred'
-    });
+    response.status(500).json({ code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' });
   });
 
   return { app, userStore };
