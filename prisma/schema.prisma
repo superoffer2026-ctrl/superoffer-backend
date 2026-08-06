@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  UNIVERSITY_OFFICER
+  LOAN_OFFICER
+  CONSULTANT
+  ADMIN
+}
+
+model User {
+  id             String          @id @default(uuid())
+  email          String          @unique
+  passwordHash   String
+  role           Role            @default(STUDENT)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  studentProfile StudentProfile?
+
+  @@map("users")
+}
+
+/// One row per student. Each wizard step owns its own JSONB section so the
+/// shape can keep evolving with the frontend without a migration per field.
+model StudentProfile {
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  personal         Json      @default("{}")
+  academic         Json      @default("{}")
+  studyPreferences Json      @default("{}")
+  entranceExams    Json      @default("{}")
+  financial        Json      @default("{}")
+  projects         Json      @default("{}")
+  status           String    @default("DRAFT")
+  submittedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@map("student_profiles")
+}
+
+model StudentDocument {
+  id           String   @id @default(uuid())
+  userId       String
+  documentType String
+  fileName     String
+  mimeType     String
+  size         Int
+  storagePath  String
+  uploadedAt   DateTime @default(now())
+
+  @@index([userId])
+  @@map("student_documents")
+}
