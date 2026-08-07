@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { AdminModule } from './admin/admin.module';
 import { StudentsModule } from './students/students.module';
 import { DocumentsModule } from './documents/documents.module';
 import { HealthController } from './health.controller';
@@ -11,6 +12,7 @@ import { HealthController } from './health.controller';
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     AuthModule,
+    AdminModule,
     StudentsModule,
     DocumentsModule
   ],

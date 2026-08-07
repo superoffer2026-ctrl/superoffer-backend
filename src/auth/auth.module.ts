@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
+import { MetaWhatsAppSender, MockWhatsAppSender, WHATSAPP_SENDER } from './whatsapp-sender';
 
 @Module({
   imports: [
@@ -17,7 +18,28 @@ import { JwtStrategy } from './jwt.strategy';
       })
     })
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    {
+      provide: WHATSAPP_SENDER,
+      useFactory: (config: ConfigService) => {
+        const accessToken = config.get<string>('WHATSAPP_ACCESS_TOKEN');
+        const phoneNumberId = config.get<string>('WHATSAPP_PHONE_NUMBER_ID');
+        if (accessToken && phoneNumberId) {
+          return new MetaWhatsAppSender({
+            accessToken,
+            phoneNumberId,
+            apiVersion: config.get<string>('WHATSAPP_API_VERSION'),
+            templateName: config.get<string>('WHATSAPP_OTP_TEMPLATE_NAME'),
+            languageCode: config.get<string>('WHATSAPP_OTP_TEMPLATE_LANGUAGE')
+          });
+        }
+        return new MockWhatsAppSender();
+      },
+      inject: [ConfigService]
+    }
+  ],
   controllers: [AuthController],
   exports: [AuthService]
 })

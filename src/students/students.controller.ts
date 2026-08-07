@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -24,37 +24,23 @@ export class StudentsController {
     return this.students.completion(user.id);
   }
 
-  @Put('personal-information')
-  updatePersonal(@CurrentUser() user: AuthenticatedUser, @Body() body: Record<string, unknown>) {
-    return this.students.updateSection(user.id, 'personal', body);
+  @Get('offers')
+  getOffers(@CurrentUser() user: AuthenticatedUser) {
+    return this.students.offers(user.id);
   }
 
-  @Put('academic-information')
-  updateAcademic(@CurrentUser() user: AuthenticatedUser, @Body() body: Record<string, unknown>) {
-    return this.students.updateSection(user.id, 'academic', body);
+  @Put()
+  updateProfile(@CurrentUser() user: AuthenticatedUser, @Body() body: Record<string, unknown>) {
+    return this.students.updateProfile(user.id, body);
   }
 
-  @Put('study-preferences')
-  updateStudyPreferences(@CurrentUser() user: AuthenticatedUser, @Body() body: Record<string, unknown>) {
-    return this.students.updateSection(user.id, 'studyPreferences', body);
-  }
-
-  @Put('entrance-exams')
-  updateEntranceExams(@CurrentUser() user: AuthenticatedUser, @Body() body: Record<string, unknown>) {
-    return this.students.updateSection(user.id, 'entranceExams', body);
-  }
-
-  @Put('financial-information')
+  @Put('financial')
   updateFinancial(@CurrentUser() user: AuthenticatedUser, @Body() body: Record<string, unknown>) {
-    return this.students.updateSection(user.id, 'financial', body);
-  }
-
-  @Put('projects-achievements')
-  updateProjects(@CurrentUser() user: AuthenticatedUser, @Body() body: Record<string, unknown>) {
-    return this.students.updateSection(user.id, 'projects', body);
+    return this.students.updateFinancial(user.id, body);
   }
 
   @Post('submit')
+  @HttpCode(HttpStatus.OK)
   submit(@CurrentUser() user: AuthenticatedUser) {
     return this.students.submit(user.id);
   }

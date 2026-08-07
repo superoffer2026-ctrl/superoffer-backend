@@ -12,37 +12,147 @@ enum Role {
   UNIVERSITY_OFFICER
   LOAN_OFFICER
   CONSULTANT
-  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum OrganizationType {
+  UNIVERSITY
+  BANK
+  CONSULTANCY
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum StudyLevel {
+  UG
+  PG
+  PHD
 }
 
 model User {
-  id             String          @id @default(uuid())
-  email          String          @unique
-  passwordHash   String
-  role           Role            @default(STUDENT)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  studentProfile StudentProfile?
+  id                  String          @id @default(uuid())
+  /// Institution roles register with email+password. Students are phone+OTP only.
+  email               String?         @unique
+  phone               String?         @unique
+  passwordHash        String?
+  fullName            String?
+  role                Role            @default(STUDENT)
+  status              UserStatus      @default(ACTIVE)
+  emailVerifiedAt     DateTime?
+  phoneVerifiedAt     DateTime?
+  failedLoginAttempts Int             @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  organizationId      String?
+  organization        Organization?   @relation(fields: [organizationId], references: [id])
+  studentProfile      StudentProfile?
+  authSessions        AuthSession[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
   @@map("users")
 }
 
-/// One row per student. Each wizard step owns its own JSONB section so the
-/// shape can keep evolving with the frontend without a migration per field.
-model StudentProfile {
+/// One row per registering institution (university, bank, or consultancy).
+/// Institution officers can't search/invite until verificationStatus = APPROVED.
+model Organization {
+  id                 String           @id @default(uuid())
+  name               String
+  organizationType   OrganizationType
+  registrationNumber String?
+  licenseReference   String?
+  website            String?
+  country            String?
+  city               String?
+  verificationStatus ApprovalStatus   @default(PENDING)
+  submittedAt        DateTime         @default(now())
+  reviewedAt         DateTime?
+  rejectionReason    String?
+  reviewNote         String?
+  users              User[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@map("organizations")
+}
+
+/// Backs refresh-token revocation (GET/DELETE /auth/sessions) and
+/// "invalidate other sessions" on password reset.
+model AuthSession {
   id               String    @id @default(uuid())
-  userId           String    @unique
+  userId           String
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  personal         Json      @default("{}")
-  academic         Json      @default("{}")
-  studyPreferences Json      @default("{}")
-  entranceExams    Json      @default("{}")
-  financial        Json      @default("{}")
-  projects         Json      @default("{}")
-  status           String    @default("DRAFT")
-  submittedAt      DateTime?
+  refreshTokenHash String
+  deviceInfo       String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
   createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
+
+/// Student login OTPs, delivered over WhatsApp. purpose is always LOGIN today;
+/// kept as a string (not enum) so EMAIL_VERIFY/PHONE_VERIFY/LOGIN_MFA can be
+/// added later for institution MFA without a migration.
+model OtpCode {
+  id         String    @id @default(uuid())
+  phone      String
+  codeHash   String
+  purpose    String    @default("LOGIN")
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone])
+  @@map("otp_codes")
+}
+
+/// Append-only trail of Super Admin actions (approvals/rejections), surfaced
+/// on the admin panel's "Audit log" tab.
+model AuditLog {
+  id               String   @id @default(uuid())
+  action           String
+  organizationName String?
+  entityId         String?
+  actorUserId      String?
+  reason           String?
+  occurredAt       DateTime @default(now())
+
+  @@map("audit_log")
+}
+
+/// One row per student. Column names mirror the real onboarding wizard's form
+/// groups exactly (basic/academic/preferences/testDetails/achievements/
+/// financial/links) so the API needs no field-mapping layer against the UI.
+model StudentProfile {
+  id            String      @id @default(uuid())
+  userId        String      @unique
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  basic         Json        @default("{}")
+  studyLevel    StudyLevel?
+  academic      Json        @default("{}")
+  preferences   Json        @default("{}")
+  selectedTests String[]    @default([])
+  testDetails   Json        @default("{}")
+  achievements  Json        @default("{}")
+  financial     Json        @default("{}")
+  links         Json        @default("{}")
+  status        String      @default("DRAFT")
+  submittedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   @@map("student_profiles")
 }
