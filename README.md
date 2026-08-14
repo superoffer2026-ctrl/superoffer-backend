@@ -94,7 +94,7 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |---|---|---|
-| `PORT` | no (default `5000`) | Port the API listens on |
+| `PORT` | no (default `3000`) | Port the API listens on |
 | `NODE_ENV` | no (default `development`) | `development` or `production` |
 | `MONGODB_URI` | **yes** | MongoDB Atlas connection string |
 
@@ -119,7 +119,7 @@ On startup you should see:
 ```
 [database] Connected to MongoDB. Database: "superoffer"
 [server] SuperOffer API running in development mode
-[server] Health check: http://localhost:5000/api/v1/health
+[server] Health check: http://localhost:3000/api/v1/health
 ```
 
 ---
@@ -127,7 +127,7 @@ On startup you should see:
 ## 6. Health-check endpoint
 
 ```
-GET http://localhost:5000/api/v1/health
+GET http://localhost:3000/api/v1/health
 ```
 
 ```json
