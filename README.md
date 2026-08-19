@@ -1,14 +1,12 @@
 # SuperOffer Backend
 
-The REST API for **SuperOffer** — an international education marketplace where
-universities discover suitable students, view their profiles, shortlist them,
-and eventually send offers. Students create one structured profile (personal
-details, education, academic scores, study preferences, budget, entrance exams)
-and receive relevant opportunities.
+The REST API for **SuperOffer** — a reverse-admissions marketplace for
+international education. Students build one structured profile and submit it
+once; verified universities and banks search those profiles and come to the
+student with concrete offers.
 
-This backend is built **one step at a time**. This README always describes what
-actually exists today — check *Current development phase* at the bottom before
-assuming a feature is implemented.
+This README describes what **actually exists today**. Check
+*Current state* at the bottom before assuming a feature is implemented.
 
 ---
 
@@ -16,13 +14,23 @@ assuming a feature is implemented.
 
 | Layer | Choice |
 |---|---|
-| Runtime | Node.js (v18+) |
-| Web framework | Express.js |
-| Database | MongoDB Atlas |
-| ODM (talks to MongoDB) | Mongoose |
+| Runtime | Node.js ≥ 20 |
+| Framework | NestJS 10 |
+| Database | **PostgreSQL** |
+| ORM | **Prisma 5** |
+| Auth | JWT access + refresh, sessions persisted in Postgres |
+| Student login | Phone + OTP, delivered over WhatsApp |
+| Validation | `class-validator` DTOs via a global `ValidationPipe` |
 | API style | REST, versioned under `/api/v1` |
+| API docs | Swagger UI at `/api-docs` |
 
-Planned for later steps: OTP-based authentication, JWT, role-based access control.
+> **History note.** This repository briefly contained an Express 4 + Mongoose 8
+> scaffold targeting MongoDB Atlas. It never grew past a `/health` route and
+> defined no models. It was removed in favour of the NestJS + Prisma +
+> PostgreSQL backend, which was developed in parallel inside the
+> `superoffer-frontend` repository and merged here with its full history.
+> **There is no MongoDB anywhere in this codebase.** Some documents under
+> `docs/` still describe collections in Mongo terms — see §6.
 
 ---
 
@@ -30,200 +38,121 @@ Planned for later steps: OTP-based authentication, JWT, role-based access contro
 
 ```
 superoffer-backend/
+├── prisma/
+│   ├── schema.prisma         # the single source of truth for the database
+│   └── migrations/           # 2 applied migrations
 ├── src/
-│   ├── config/
-│   │   ├── database.js      # opens/closes the MongoDB connection
-│   │   └── env.js           # loads + validates environment variables
-│   ├── controllers/         # handle a request, send a response (thin)
-│   ├── models/              # Mongoose schemas        (empty — no models yet)
-│   ├── routes/              # map URLs to controllers (no logic)
-│   ├── services/            # business logic          (empty for now)
-│   ├── middleware/
-│   │   └── error.middleware.js   # the one place errors become JSON
-│   ├── validators/          # request validation      (empty for now)
-│   ├── utils/               # small shared helpers
-│   ├── app.js               # configures Express (middleware + routes)
-│   └── server.js            # starts everything (config -> DB -> listen)
-├── tests/
-├── .env                     # your real secrets — NEVER committed
-├── .env.example             # placeholder template — safe to commit
-├── .gitignore
-└── package.json
+│   ├── auth/                 # register, login, OTP, JWT strategy, guards
+│   │   ├── dto/              # request shapes + validation rules
+│   │   ├── jwt.strategy.ts   # verifies the bearer token
+│   │   ├── roles.guard.ts    # enforces @Roles(...) on a handler
+│   │   ├── otp.util.ts       # OTP generation + hashing
+│   │   └── whatsapp-sender.ts# Meta Cloud API sender (mock if unconfigured)
+│   ├── students/             # student profile read/write/submit
+│   ├── documents/            # document upload/list/replace/preview/delete
+│   ├── admin/                # verification queue, approvals, audit log
+│   │   └── admin-key.guard.ts# x-admin-key header check
+│   ├── prisma/               # PrismaService (one client, app-wide)
+│   ├── health.controller.ts
+│   ├── app.module.ts         # wires every module together
+│   └── main.ts               # bootstrap: CORS, prefix, pipes, Swagger, listen
+└── docs/                     # backend specification (01–11)
 ```
 
-Empty folders contain a `.gitkeep` file. That's only because git cannot track an
-empty folder — it has no other purpose, and it disappears once real files arrive.
+### How a request flows
 
-### Why `app.js` and `server.js` are separate
+```
+HTTP  →  Guard (JwtAuthGuard / RolesGuard / AdminKeyGuard)
+      →  ValidationPipe (DTO is checked and coerced)
+      →  Controller (thin — no logic)
+      →  Service (business logic)
+      →  PrismaService  →  PostgreSQL
+```
 
-This is the design decision most worth understanding.
-
-- **`app.js`** describes *what the application is*: which middleware runs, which
-  routes exist, how errors are formatted. It never connects to a database and
-  never calls `listen()`.
-- **`server.js`** owns *the startup sequence*: load config → connect to MongoDB →
-  start listening.
-
-Two benefits:
-
-1. **Testing.** Automated tests can `require('./app')` and check that
-   `GET /api/v1/health` returns 200 — without a live Atlas cluster. If
-   `mongoose.connect()` lived inside `app.js`, every test would need a real
-   database just to check a URL.
-2. **Clear failure order.** The server refuses to accept requests until the
-   database is actually connected, so you never get a "working" API whose every
-   query fails.
+Guards run **before** validation. That ordering matters: an unauthenticated
+request is rejected without the server ever parsing its body.
 
 ---
 
-## 3. Installation
+## 3. Data model
+
+Seven tables, defined in `prisma/schema.prisma`:
+
+| Table | Purpose |
+|---|---|
+| `users` | Auth only. Institutions use email+password; students use phone+OTP. Carries `role`, `status`, lockout counters. |
+| `organizations` | One row per registering university / bank. `verificationStatus` gates login. |
+| `auth_sessions` | Hashed refresh tokens — enables revocation and "sign out other devices". |
+| `otp_codes` | Student login OTPs. Hashed, attempt-counted, expiring. |
+| `audit_log` | Append-only trail of Super Admin approvals and rejections. |
+| `student_profiles` | The wizard's form groups stored as JSON columns, mirroring the UI's shape so no field-mapping layer is needed. |
+| `student_documents` | File metadata; bytes live on disk/object storage, not in the database. |
+
+---
+
+## 4. Environment
+
+Copy `.env.example` to `.env` and fill it in.
+
+| Variable | Required | Notes |
+|---|---|---|
+| `DATABASE_URL` | **yes** | `postgresql://user:pass@host:5432/superoffer?schema=public` |
+| `AUTH_TOKEN_SECRET` | **yes** | ≥ 32 random characters |
+| `ADMIN_APPROVAL_KEY` | **yes** | The Super Admin credential — there is no admin account |
+| `OTP_HASH_SECRET` | **yes** | ≥ 32 random characters |
+| `PORT` / `HOST` | no | Defaults `3000` / `0.0.0.0` |
+| `CORS_ORIGIN` | no | Comma-separated; defaults to `http://localhost:4200` |
+| `ACCESS_TOKEN_TTL_SECONDS` | no | Default 3600 |
+| `REFRESH_TOKEN_TTL_SECONDS` | no | Default 2592000 (30 days) |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | no | **Leave unset in development** — the sender falls back to a mock that logs the OTP instead of sending it |
+
+---
+
+## 5. Running it
 
 ```bash
 npm install
+npx prisma generate          # regenerate the typed client
+npx prisma migrate deploy    # apply migrations to your database
+npm run start:dev            # ts-node, http://localhost:3000/api/v1
 ```
+
+| URL | What |
+|---|---|
+| `http://localhost:3000/api/v1/health` | Liveness probe |
+| `http://localhost:3000/api-docs` | Swagger UI |
+
+Build for production with `npm run build` (emits `dist/`), then `npm start`.
 
 ---
 
-## 4. Environment variables
+## 6. Current state
 
-Copy the template, then fill in real values:
+**Implemented — 21 endpoints:**
 
-```bash
-cp .env.example .env
-```
+| Mount | Endpoints |
+|---|---|
+| `/auth` | `POST /register`, `POST /login`, `GET /status/:userId`, `POST /otp/request`, `POST /otp/verify`, `GET /me` |
+| `/students/me` | `GET`, `GET /completion`, `GET /offers`, `PUT`, `PUT /financial`, `POST /submit` |
+| `/students/me/documents` | `GET`, `POST`, `PUT /:id`, `GET /:id/preview`, `DELETE /:id` |
+| `/admin` | `GET /registrations`, `PATCH /users/:userId/approval`, `GET /audit-log` |
 
-| Variable | Required | Description |
-|---|---|---|
-| `PORT` | no (default `3000`) | Port the API listens on |
-| `NODE_ENV` | no (default `development`) | `development` or `production` |
-| `MONGODB_URI` | **yes** | MongoDB Atlas connection string |
+**Not built yet:**
 
-`MONGODB_URI` is the only required variable, so the app fails immediately and
-clearly if it's missing, rather than crashing later with a confusing message.
+- **University module** — student discovery, filtering, shortlists
+- **Bank module** — lender discovery, `bankEvaluationMode`, loan criteria
+- **Offers module** — the org → student offer loop. `GET /students/me/offers`
+  exists but nothing can populate it, because no organization-side endpoint
+  creates an offer. **This is the single biggest functional gap.**
+- **Reference data** — the ~1,400 universities, 279 programs and 50 countries
+  the wizard's dropdowns need
 
-**`.env` is listed in `.gitignore` and must never be committed** — it contains
-your database username and password. Only `.env.example` (placeholders) is
-tracked in git.
+**Known inconsistencies to resolve:**
 
----
-
-## 5. Running locally
-
-```bash
-npm run dev     # development: nodemon restarts the server when you edit a file
-npm start       # plain start, no auto-restart (used in production)
-```
-
-On startup you should see:
-
-```
-[database] Connected to MongoDB. Database: "superoffer"
-[server] SuperOffer API running in development mode
-[server] Health check: http://localhost:3000/api/v1/health
-```
-
----
-
-## 6. Health-check endpoint
-
-```
-GET http://localhost:3000/api/v1/health
-```
-
-```json
-{
-  "success": true,
-  "message": "SuperOffer API is running"
-}
-```
-
-Use this to confirm the server is alive before debugging anything else.
-
----
-
-## 7. How MongoDB Atlas is connected
-
-`src/config/database.js` calls `mongoose.connect(MONGODB_URI)` exactly once, and
-`src/server.js` is the only file that calls it — at startup, before the HTTP
-server begins listening. If the connection fails, the process logs a clear
-reason and exits with code 1 instead of running in a broken state.
-
-No data models exist yet. This step only proves the connection works. Models
-(students, universities, offers) arrive in later steps alongside the APIs
-that use them.
-
-**If the connection fails, it is almost always one of these two things:**
-
-1. **Wrong password** in `MONGODB_URI`. Special characters (`@ : / ?`) must be
-   URL-encoded.
-2. **Your IP address isn't allowed.** In Atlas → **Network Access**, add your
-   current IP. Atlas blocks everything by default, and the resulting timeout
-   error does not say so clearly.
-
----
-
-## 8. API versioning
-
-Every route is mounted under `/api/v1/…`. When a future change would break
-existing clients (like the deployed Angular frontend), we introduce `/api/v2/…`
-alongside v1 rather than changing v1 under everyone's feet.
-
----
-
-## 9. API response format
-
-Every response uses the same shape, so the frontend can rely on it.
-
-Success:
-
-```json
-{ "success": true, "message": "...", "data": { } }
-```
-
-(`data` is omitted when there's nothing to return.)
-
-Error:
-
-```json
-{ "success": false, "message": "..." }
-```
-
-Errors are produced in exactly one place — `src/middleware/error.middleware.js`.
-Controllers and services never build error responses themselves; they just
-`throw new ApiError(404, 'Student not found')` and the middleware handles the
-rest. In development the response also includes a `stack` field for debugging;
-in production it never does.
-
----
-
-## 10. Development rules
-
-These keep the codebase consistent as it grows:
-
-1. No business logic in routes — routes only map a URL to a controller.
-2. No database queries in routes.
-3. Controllers, services and models stay separate.
-4. Configuration stays out of application logic.
-5. Use `async/await`, not callbacks.
-6. Use the shared response helpers — never hand-build a response shape.
-7. Don't duplicate code.
-8. Don't create files that aren't needed yet.
-9. Don't build future features early.
-10. Keep the architecture scalable but appropriate for an early-stage startup.
-
----
-
-## 11. Current development phase
-
-**Step 1 — Backend Foundation.** ✅ Complete:
-
-- Project structure and npm scripts
-- Environment configuration with validation
-- MongoDB Atlas connection
-- Express app: helmet, CORS, JSON/urlencoded parsing, request logging
-- Centralized error handling + 404 handling
-- `GET /api/v1/health`
-
-**Not built yet** (deliberately): authentication, OTP, JWT, data models,
-student APIs, university APIs, offers, matching, admin features, notifications,
-payments.
+1. `prisma/schema.prisma` still declares `CONSULTANT` in `Role` and
+   `CONSULTANCY` in `OrganizationType`. The consultancy portal was deliberately
+   removed from the product; these enum values should be dropped in a migration.
+2. `docs/` was written against the earlier MongoDB design and still refers to
+   collections and Mongoose schemas. The Prisma schema — not `docs/03` — is
+   authoritative for the data model. The docs remain useful for business rules,
+   API contracts and build order.
