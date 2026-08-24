@@ -24,8 +24,7 @@ const PASSWORD = process.env.SEED_PASSWORD || 'Password123';
 
 if (!process.env.SEED_PASSWORD && process.env.NODE_ENV === 'production') {
   console.error(
-    'Refusing to seed production with the public default password.
-' +
+    'Refusing to seed production with the public default password. ' +
     'Run again with SEED_PASSWORD set to something only you know.'
   );
   process.exit(1);
