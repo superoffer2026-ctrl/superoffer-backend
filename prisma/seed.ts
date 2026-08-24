@@ -13,7 +13,23 @@ import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
-const PASSWORD = 'Password123';
+/**
+ * The password every seeded account gets.
+ *
+ * Development keeps a memorable default. Anywhere real, SEED_PASSWORD must be
+ * supplied — this file is public, so a password written here is a published
+ * credential for whatever it is run against.
+ */
+const PASSWORD = process.env.SEED_PASSWORD || 'Password123';
+
+if (!process.env.SEED_PASSWORD && process.env.NODE_ENV === 'production') {
+  console.error(
+    'Refusing to seed production with the public default password.
+' +
+    'Run again with SEED_PASSWORD set to something only you know.'
+  );
+  process.exit(1);
+}
 
 async function seedOrganization(input: {
   name: string;
