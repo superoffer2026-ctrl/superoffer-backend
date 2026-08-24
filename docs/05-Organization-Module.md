@@ -42,7 +42,7 @@ Settings tabs: `org`, `subscription`, `accreditation`, `team`, `notifications`, 
   templates?, url?, createdAt?, lastModifiedAt?, inviteNote?, templateName? }
 ```
 
-Note `seats: number | 'Rolling'` — a union of number and literal. In Mongoose use
+Note `seats: number | 'Rolling'` — a union of number and literal. Store
 `Mixed`, or store `seats: Number` plus `rollingAdmission: Boolean`. Money values
 (`tuitionFee`, `maxAmount`) are **display strings** with currency baked in
 (`"CAD 42,000 / year"`), not numbers.

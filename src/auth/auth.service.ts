@@ -30,7 +30,7 @@ const ORGANIZATION_TYPE_BY_ROLE: Record<string, OrganizationType> = {
 
 const normalizePhone = (phone: string): string => String(phone || '').trim().replace(/[\s()-]/g, '');
 
-type SessionMeta = { deviceInfo?: string };
+type SessionMeta = { deviceInfo?: string; ip?: string };
 type UserWithOrganization = User & { organization?: { name: string; organizationType: OrganizationType; registrationNumber: string | null; licenseReference: string | null; website: string | null; country: string | null; city: string | null; verificationStatus: string; rejectionReason: string | null; reviewedAt: Date | null } | null };
 
 @Injectable()
@@ -42,20 +42,42 @@ export class AuthService {
     @Inject(WHATSAPP_SENDER) private whatsApp: WhatsAppSender
   ) {}
 
+  /** Append-only trail behind the admin panel's Auth logs. Never throws — a logging
+   *  failure must not break a login. */
+  private async recordLoginEvent(input: {
+    email: string;
+    outcome: 'SUCCESS' | 'FAILED' | 'LOCKED';
+    userId?: string;
+    role?: string;
+    meta?: SessionMeta;
+  }) {
+    try {
+      await this.prisma.loginEvent.create({
+        data: {
+          email: input.email,
+          outcome: input.outcome,
+          userId: input.userId,
+          role: input.role,
+          ip: input.meta?.ip,
+          userAgent: input.meta?.deviceInfo
+        }
+      });
+    } catch {
+      /* logging is best-effort */
+    }
+  }
+
   async register(dto: RegisterDto) {
     const email = dto.email.trim().toLowerCase();
     const phone = dto.phone?.trim() ? normalizePhone(dto.phone) : undefined;
 
-    if (dto.role === 'STUDENT') {
-      throw new BadRequestException({
-        code: 'STUDENT_USES_OTP_LOGIN',
-        message: 'Students sign in with a WhatsApp OTP — use POST /api/v1/auth/otp/request',
-        otp_login_endpoint: '/api/v1/auth/otp/request'
-      });
-    }
-    const organizationType = ORGANIZATION_TYPE_BY_ROLE[dto.role];
-    if (!organizationType) {
+    const isStudent = dto.role === 'STUDENT';
+    const organizationType = isStudent ? undefined : ORGANIZATION_TYPE_BY_ROLE[dto.role];
+    if (!isStudent && !organizationType) {
       throw new BadRequestException({ code: 'INVALID_ROLE', message: 'The selected role cannot be registered' });
+    }
+    if (!isStudent && !dto.organization?.name) {
+      throw new BadRequestException({ code: 'ORGANIZATION_REQUIRED', message: 'Institution accounts must include organization details' });
     }
 
     if (await this.prisma.user.findUnique({ where: { email } })) {
@@ -68,16 +90,27 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const role = dto.role as Role;
 
+    /** Students have no organization and no approval step — they can sign in immediately. */
+    if (isStudent) {
+      const student = await this.prisma.$transaction(async tx => {
+        const created = await tx.user.create({ data: { email, phone, passwordHash, fullName: dto.fullName, role } });
+        await tx.studentProfile.create({ data: { userId: created.id } });
+        return created;
+      });
+
+      return { user_id: student.id, role: student.role, approval_status: 'APPROVED', can_login: true };
+    }
+
     const user = await this.prisma.$transaction(async tx => {
       const organization = await tx.organization.create({
         data: {
-          name: dto.organization.name,
-          organizationType,
-          registrationNumber: dto.organization.registrationNumber,
-          licenseReference: dto.organization.licenseReference,
-          website: dto.organization.website,
-          country: dto.organization.country,
-          city: dto.organization.city
+          name: dto.organization!.name,
+          organizationType: organizationType!,
+          registrationNumber: dto.organization!.registrationNumber,
+          licenseReference: dto.organization!.licenseReference,
+          website: dto.organization!.website,
+          country: dto.organization!.country,
+          city: dto.organization!.city
         }
       });
       return tx.user.create({
@@ -114,18 +147,12 @@ export class AuthService {
     }
 
     if (!user) {
+      await this.recordLoginEvent({ email: identifier, outcome: 'FAILED', meta });
       throw new UnauthorizedException({ code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' });
     }
-    if (user.role === Role.STUDENT) {
-      throw new BadRequestException({
-        code: 'STUDENT_USES_OTP_LOGIN',
-        message: 'Students sign in with a WhatsApp OTP — use POST /api/v1/auth/otp/request',
-        otp_login_endpoint: '/api/v1/auth/otp/request'
-      });
-    }
-
     const lockedUntil = user.lockedUntil?.getTime() ?? 0;
     if (lockedUntil > Date.now()) {
+      await this.recordLoginEvent({ email: identifier, outcome: 'LOCKED', userId: user.id, role: user.role, meta });
       throw new HttpException(
         { code: 'ACCOUNT_LOCKED', message: 'Account is temporarily locked', retry_after_seconds: Math.ceil((lockedUntil - Date.now()) / 1000) },
         423
@@ -139,6 +166,13 @@ export class AuthService {
       await this.prisma.user.update({
         where: { id: user.id },
         data: { failedLoginAttempts, lockedUntil: shouldLock ? new Date(Date.now() + LOCK_DURATION_MS) : null }
+      });
+      await this.recordLoginEvent({
+        email: identifier,
+        outcome: shouldLock ? 'LOCKED' : 'FAILED',
+        userId: user.id,
+        role: user.role,
+        meta
       });
       if (shouldLock) {
         throw new HttpException(
@@ -170,6 +204,7 @@ export class AuthService {
       include: { organization: true }
     })) as UserWithOrganization;
 
+    await this.recordLoginEvent({ email: identifier, outcome: 'SUCCESS', userId: user.id, role: user.role, meta });
     return this.issueTokens(updated, meta);
   }
 
@@ -182,9 +217,62 @@ export class AuthService {
       phone: user.phone || '',
       full_name: user.fullName || '',
       role: user.role,
+      password_changed_at: user.passwordChangedAt,
       approval_status: user.organization?.verificationStatus || 'APPROVED',
       organization: user.organization ? { name: user.organization.name, organizationType: user.organization.organizationType } : null
     };
+  }
+
+  /** Name and email edits from the account settings screens. */
+  async updateAccount(userId: string, dto: { fullName?: string; email?: string }) {
+    const data: Record<string, unknown> = {};
+    if (dto.fullName !== undefined) data.fullName = dto.fullName.trim();
+    if (dto.email !== undefined) {
+      const email = dto.email.trim().toLowerCase();
+      const clash = await this.prisma.user.findUnique({ where: { email } });
+      if (clash && clash.id !== userId) {
+        throw new ConflictException({ code: 'EMAIL_ALREADY_REGISTERED', message: 'An account already exists for this email' });
+      }
+      data.email = email;
+      data.emailVerifiedAt = null;
+    }
+    await this.prisma.user.update({ where: { id: userId }, data });
+    return this.me(userId);
+  }
+
+  async changePassword(userId: string, current: string, next: string, currentSessionId?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.passwordHash || !(await bcrypt.compare(current, user.passwordHash))) {
+      throw new UnauthorizedException({ code: 'INVALID_CREDENTIALS', message: 'Your current password is incorrect' });
+    }
+    if (next.length < 8) {
+      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'New password must be at least 8 characters' });
+    }
+    const changedAt = new Date();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: await bcrypt.hash(next, 12), passwordChangedAt: changedAt }
+    });
+    /**
+     * Every *other* session is invalidated, so a stolen token can't outlive the
+     * change — but the device making the change stays signed in.
+     */
+    await this.prisma.authSession.updateMany({
+      where: { userId, revokedAt: null, ...(currentSessionId ? { id: { not: currentSessionId } } : {}) },
+      data: { revokedAt: new Date() }
+    });
+    return { changed: true, changedAt };
+  }
+
+  /** Revokes just this session, so the token stops working the moment they sign out. */
+  async logout(sessionId?: string) {
+    if (sessionId) {
+      await this.prisma.authSession.updateMany({
+        where: { id: sessionId, revokedAt: null },
+        data: { revokedAt: new Date() }
+      });
+    }
+    return { signedOut: true };
   }
 
   async status(userId: string) {
@@ -301,19 +389,37 @@ export class AuthService {
   }
 
   private async issueTokens(user: UserWithOrganization, meta: SessionMeta) {
-    const payload = { sub: user.id, email: user.email ?? undefined, phone: user.phone ?? undefined, role: user.role };
     const accessTtl = Number(this.config.get('ACCESS_TOKEN_TTL_SECONDS')) || 3600;
     const refreshTtl = Number(this.config.get('REFRESH_TOKEN_TTL_SECONDS')) || 2_592_000;
-    const accessToken = this.jwt.sign(payload, { expiresIn: accessTtl });
-    const refreshToken = this.jwt.sign(payload, { expiresIn: refreshTtl });
 
-    await this.prisma.authSession.create({
+    /**
+     * The session row is created first so its id can be signed into the token as
+     * `sid`. Without that link the guard has no way to tell a revoked session
+     * from a live one, and revoking a session would have no effect until the
+     * token happened to expire.
+     */
+    const session = await this.prisma.authSession.create({
       data: {
         userId: user.id,
-        refreshTokenHash: hashToken(refreshToken),
+        refreshTokenHash: '',
         deviceInfo: meta.deviceInfo,
         expiresAt: new Date(Date.now() + refreshTtl * 1000)
       }
+    });
+
+    const payload = {
+      sub: user.id,
+      sid: session.id,
+      email: user.email ?? undefined,
+      phone: user.phone ?? undefined,
+      role: user.role
+    };
+    const accessToken = this.jwt.sign(payload, { expiresIn: accessTtl });
+    const refreshToken = this.jwt.sign(payload, { expiresIn: refreshTtl });
+
+    await this.prisma.authSession.update({
+      where: { id: session.id },
+      data: { refreshTokenHash: hashToken(refreshToken) }
     });
 
     return {

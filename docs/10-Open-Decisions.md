@@ -98,7 +98,7 @@ where?
 
 **Recommendation:** object storage (S3 or Cloudinary), with only metadata in Mongo
 (`documentType`, `fileName`, `mimeType`, `size`, `storageKey`, `uploadedAt`).
-Storing files in MongoDB bloats documents and makes backups painful; the 16MB BSON
+Storing file bytes in the database bloats rows and makes backups painful; the row-size
 limit is a real ceiling for transcripts and passports.
 
 Also decide: max file size, allowed MIME types, and whether documents are

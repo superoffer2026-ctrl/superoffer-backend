@@ -41,7 +41,8 @@ enum StudyLevel {
 
 model User {
   id                  String          @id @default(uuid())
-  /// Institution roles register with email+password. Students are phone+OTP only.
+  /// Every role signs in with email+password. `phone` is optional and is also the
+  /// lookup key for the WhatsApp OTP flow, which is built but not currently used.
   email               String?         @unique
   phone               String?         @unique
   passwordHash        String?
@@ -53,10 +54,16 @@ model User {
   failedLoginAttempts Int             @default(0)
   lockedUntil         DateTime?
   lastLoginAt         DateTime?
+  /// Stamped whenever the account password is changed; the settings screens show it.
+  passwordChangedAt   DateTime?
   organizationId      String?
   organization        Organization?   @relation(fields: [organizationId], references: [id])
   studentProfile      StudentProfile?
   authSessions        AuthSession[]
+  offers              Offer[]
+  shortlistedBy       Shortlist[]
+  loginEvents         LoginEvent[]
+  creditConsents      CreditConsent[]
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
@@ -66,7 +73,7 @@ model User {
 /// One row per registering institution (university, bank, or consultancy).
 /// Institution officers can't search/invite until verificationStatus = APPROVED.
 model Organization {
-  id                 String           @id @default(uuid())
+  id                 String                @id @default(uuid())
   name               String
   organizationType   OrganizationType
   registrationNumber String?
@@ -74,14 +81,31 @@ model Organization {
   website            String?
   country            String?
   city               String?
-  verificationStatus ApprovalStatus   @default(PENDING)
-  submittedAt        DateTime         @default(now())
+  verificationStatus ApprovalStatus        @default(PENDING)
+  submittedAt        DateTime              @default(now())
   reviewedAt         DateTime?
   rejectionReason    String?
   reviewNote         String?
+  /// Editable profile copy shown in the workspace's Org Profile tab.
+  description        String?
+  /// Subscription state. `profilesViewed` is the quota counter for the cycle.
+  plan               String                @default("Professional")
+  profilesViewed     Int                   @default(0)
+  /// Bank-only: which students an officer may evaluate (docs/09-Business-Rules.md).
+  bankEvaluationMode String?
+  bureauCredential   OrganizationBureauCredential?
+  /// Matching thresholds the discovery score is computed from.
+  criteria           Json                  @default("{}")
+  /// Per-officer-organization notification frequencies.
+  notificationPrefs  Json                  @default("[]")
+  /// Reusable offer term sets the composer loads from.
+  offerTemplates     Json                  @default("[]")
   users              User[]
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  offers             Offer[]
+  products           OrganizationProduct[]
+  shortlist          Shortlist[]
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
 
   @@map("organizations")
 }
@@ -102,7 +126,8 @@ model AuthSession {
   @@map("auth_sessions")
 }
 
-/// Student login OTPs, delivered over WhatsApp. purpose is always LOGIN today;
+/// Student login OTPs, delivered over WhatsApp. Built and working, but not the
+/// current sign-in path — see API_DOCUMENTATION.md. purpose is always LOGIN today;
 /// kept as a string (not enum) so EMAIL_VERIFY/PHONE_VERIFY/LOGIN_MFA can be
 /// added later for institution MFA without a migration.
 model OtpCode {
@@ -121,6 +146,61 @@ model OtpCode {
 
 /// Append-only trail of Super Admin actions (approvals/rejections), surfaced
 /// on the admin panel's "Audit log" tab.
+/// One immutable version of the admin-authored student form. A draft is edited
+/// freely; publishing freezes it and makes it the version students see.
+model FormSchema {
+  id          String    @id @default(uuid())
+  /// Which form this is: STUDENT_PROFILE, ORG_OFFER, ORG_PRODUCT, ORG_PRODUCT_INVITE.
+  /// A form and a variant together identify one editable document.
+  formKey     String    @default("STUDENT_PROFILE")
+  /// Monotonic per form and variant, so history reads in order.
+  version     Int
+  /// DRAFT, PUBLISHED or ARCHIVED. Only one PUBLISHED per form and variant.
+  status      String    @default("DRAFT")
+  /// For the student profile, an audience such as UG or PG. For an organisation
+  /// form, the organisation type it belongs to: UNIVERSITY, BANK, CONSULTANCY.
+  variant     String    @default("DEFAULT")
+  label       String
+  /// The whole FormSchemaDef, stored as one document.
+  definition  Json
+  /// What the publish check reported at the time it went live.
+  publishNote String?
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([formKey, variant, version])
+  @@index([formKey, variant, status])
+  @@map("form_schemas")
+}
+
+/// An admin-authored rule: when this happens, post this into the offer thread.
+model AutomationRule {
+  id          String   @id @default(uuid())
+  /// The domain event that fires it, e.g. "offer.accepted".
+  event       String
+  label       String
+  /// Who the message is addressed to: student, organization, or both.
+  audience    String   @default("both")
+  /// "system" for a neutral notice, "organization" for a labelled auto-reply.
+  attribution String   @default("system")
+  /// Message body, with {{placeholders}} filled from the offer and its parties.
+  body        String
+  /// Optional narrowing, e.g. { "organizationType": "BANK" }.
+  condition   Json?
+  /// Whether it badges the recipient. The actor is never badged for their own action.
+  markUnread  Boolean  @default(true)
+  enabled     Boolean  @default(true)
+  order       Int      @default(1)
+  /// Seeded rules, which an admin may edit or disable but not delete.
+  system      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([event, enabled])
+  @@map("automation_rules")
+}
+
 model AuditLog {
   id               String   @id @default(uuid())
   action           String
@@ -133,28 +213,206 @@ model AuditLog {
   @@map("audit_log")
 }
 
-/// One row per student. Column names mirror the real onboarding wizard's form
-/// groups exactly (basic/academic/preferences/testDetails/achievements/
-/// financial/links) so the API needs no field-mapping layer against the UI.
+/// One row per student, holding both profile surfaces.
+///
+/// `personal`/`studyPreferences`/`entranceExams`/`workExperience`/`projects` back the
+/// nine-step wizard under /student/*, one column per wizard section, so each
+/// PUT /students/me/<section> writes exactly one column.
+///
+/// `basic`/`studyLevel`/`selectedTests`/`testDetails`/`achievements`/`links` back the
+/// older ten-step flow at /student/onboarding. `academic` and `financial` are shared
+/// by both. See docs/10-Open-Decisions.md #2 — the two surfaces are meant to converge.
 model StudentProfile {
-  id            String      @id @default(uuid())
-  userId        String      @unique
-  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  basic         Json        @default("{}")
-  studyLevel    StudyLevel?
-  academic      Json        @default("{}")
-  preferences   Json        @default("{}")
-  selectedTests String[]    @default([])
-  testDetails   Json        @default("{}")
-  achievements  Json        @default("{}")
-  financial     Json        @default("{}")
-  links         Json        @default("{}")
-  status        String      @default("DRAFT")
-  submittedAt   DateTime?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id               String      @id @default(uuid())
+  userId           String      @unique
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  personal         Json        @default("{}")
+  studyPreferences Json        @default("{}")
+  academic         Json        @default("{}")
+  entranceExams    Json        @default("{}")
+  workExperience   Json        @default("{}")
+  financial        Json        @default("{}")
+  /// The parent or guardian who stands as co-applicant on an education loan.
+  /// Their PAN is stored encrypted; everything that leaves the server masks it.
+  coApplicant      Json        @default("{}")
+  projects         Json        @default("{}")
+  basic            Json        @default("{}")
+  studyLevel       StudyLevel?
+  preferences      Json        @default("{}")
+  selectedTests    String[]    @default([])
+  testDetails      Json        @default("{}")
+  achievements     Json        @default("{}")
+  links            Json        @default("{}")
+  status           String      @default("DRAFT")
+  /// Notification and privacy toggles from the student's Settings screen.
+  settings         Json        @default("{}")
+  /// The student's own visibility switch; discovery honours it alongside `status`.
+  discoverable     Boolean     @default(true)
+  submittedAt      DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   @@map("student_profiles")
+}
+
+/// A course or loan product an organization recruits/lends against. Replaces the
+/// catalog the workspace used to keep in localStorage.
+model OrganizationProduct {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  /// "Academic Product" or "Financial Product" — drives which offer-condition presets apply.
+  category       String?
+  url            String?
+  /// Category-specific detail (tuition, intakes, rate bands) kept flexible while the UI settles.
+  terms          Json         @default("{}")
+  archivedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@map("organization_products")
+}
+
+/// An organization's saved students. Was a localStorage set of names.
+model Shortlist {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  studentUserId  String
+  student        User         @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
+  /// How the officer triaged this candidate: SHORTLISTED or REJECTED.
+  status         String       @default("SHORTLISTED")
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, studentUserId])
+  @@index([organizationId])
+  @@map("shortlists")
+}
+
+/// Every authentication attempt, for the admin panel's Auth logs.
+model LoginEvent {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email      String
+  role       String?
+  outcome    String
+  ip         String?
+  userAgent  String?
+  occurredAt DateTime @default(now())
+
+  @@index([occurredAt])
+  @@map("login_events")
+}
+
+/// What the student sees the offer as. An organization's type decides the default
+/// (UNIVERSITY -> UNIVERSITY, BANK -> BANK) but a university can also send a
+/// SCHOLARSHIP, so it is stored per offer rather than derived on read.
+enum OfferCategory {
+  UNIVERSITY
+  BANK
+  SCHOLARSHIP
+  CONSULTANCY
+}
+
+/// The organization's view of the lifecycle. Terminal states (ACCEPTED, REJECTED,
+/// WITHDRAWN, EXPIRED) are final — see docs/06-Offers-Module.md.
+enum OfferStatus {
+  SENT
+  VIEWED
+  NEGOTIATING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+  EXPIRED
+}
+
+/// The student's view of the same offer. Kept separate from OfferStatus because the
+/// two vocabularies differ: an offer the organization sees as SENT is PENDING here.
+enum StudentDecision {
+  PENDING
+  SHORTLISTED
+  ACCEPTED
+  REJECTED
+}
+
+/// One invitation from an organization to a student.
+model Offer {
+  id              String          @id @default(uuid())
+  organizationId  String
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  studentUserId   String
+  student         User            @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
+  category        OfferCategory
+  program         String
+  headline        String
+  status          OfferStatus     @default(SENT)
+  studentDecision StudentDecision @default(PENDING)
+  /// Category-specific figures rendered by the comparison table: tuitionFee and
+  /// scholarshipPct for universities, loanAmount and interestRate for banks, and so on.
+  terms           Json            @default("{}")
+  conditions      String?
+  nextSteps       String[]        @default([])
+  contactName     String?
+  contactRole     String?
+  location        String?
+  intake          String?
+  valueLabel      String?
+  value           String?
+  /// Student-side flags; they belong to the one student the offer was sent to.
+  viewedAt        DateTime?
+  /// When each side last opened this thread. Anything sent after their stamp is
+  /// unread for them; the two are tracked separately so one side reading does
+  /// not clear the other's badge.
+  studentReadAt      DateTime?
+  organizationReadAt DateTime?
+  savedByStudent  Boolean         @default(false)
+  favourite       Boolean         @default(false)
+  compared        Boolean         @default(false)
+  respondedAt     DateTime?
+  /// 14 days from creation unless the sender overrides it.
+  expiresAt       DateTime
+  withdrawnAt     DateTime?
+  messages        OfferMessage[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([studentUserId, status])
+  @@index([organizationId, status])
+  @@map("offers")
+}
+
+model OfferMessage {
+  id         String   @id @default(uuid())
+  offerId    String
+  offer      Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  /// "institution", "student", or "system" for an automated notice.
+  sender     String
+  /// True when automation wrote this rather than a person, so the UI can say so
+  /// instead of implying an officer typed it.
+  automatic  Boolean  @default(false)
+  /// Which rule produced it, and what it was reacting to. Together with offerId
+  /// these make automation idempotent — a retried request cannot post twice.
+  ruleId     String?
+  triggerRef String?
+  /// Who an automated message is for: "student", "organization", or "both".
+  /// A notice meant for the officer is not shown to the student who caused it.
+  audience   String?
+  authorName String
+  body       String
+  /// One optional attachment. Stored the way student documents are: the bytes on
+  /// disk under a random name, the original name kept for display.
+  fileName    String?
+  storagePath String?
+  mimeType    String?
+  fileSize    Int?
+  sentAt     DateTime @default(now())
+
+  @@unique([offerId, ruleId, triggerRef])
+  @@index([offerId])
+  @@map("offer_messages")
 }
 
 model StudentDocument {
@@ -169,4 +427,123 @@ model StudentDocument {
 
   @@index([userId])
   @@map("student_documents")
+}
+
+
+/// Permission to look up someone's credit information: who granted it, to whom,
+/// for what, and until when.
+///
+/// This is the artefact a lender's compliance team asks for, so it is a record
+/// in its own right rather than a flag on a profile — it outlives the check it
+/// authorised, and a revoked consent must still show that it once existed.
+model CreditConsent {
+  id             String    @id @default(uuid())
+  /// The student whose co-applicant is the subject. The subject is not a user of
+  /// the platform, so consent hangs off the student who entered their details.
+  studentUserId  String
+  student        User      @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
+  /// The organisation allowed to look, or null when the subject is retrieving
+  /// their own report — which is their right, and needs no lender.
+  organizationId String?
+  /// SELF_PULL or LENDER_PULL.
+  kind           String
+  /// Plain-English purpose, shown to the person granting it and kept verbatim.
+  purpose        String
+  /// What they were shown when they agreed, so the wording can change later
+  /// without rewriting what anyone actually consented to.
+  statement      String
+  grantedAt      DateTime  @default(now())
+  /// Consent is never open-ended; a lender re-asks rather than assuming.
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  /// Captured for the audit trail a bureau contract requires.
+  grantedIp      String?
+  checks         CreditCheck[]
+
+  @@index([studentUserId])
+  @@index([organizationId, expiresAt])
+  @@map("credit_consents")
+}
+
+/// The outcome of one credit look-up.
+///
+/// Deliberately holds a band and a provider reference rather than the report:
+/// the less credit information stored here, the smaller the obligation, and a
+/// lender re-pulls the full file under its own membership when it underwrites.
+model CreditCheck {
+  id             String        @id @default(uuid())
+  consentId      String
+  consent        CreditConsent @relation(fields: [consentId], references: [id], onDelete: Cascade)
+  studentUserId  String
+  /// Null for a self-pull; otherwise the organisation whose membership was used.
+  organizationId String?
+  /// SELF_PULL or LENDER_PULL — a hard enquiry only ever comes from the latter.
+  kind           String
+  /// SOFT or HARD, because a hard enquiry costs the subject something.
+  enquiry        String
+  /// A band such as "750-799", never an exact score outside underwriting.
+  band           String?
+  /// Why there is no band: NO_HISTORY, IDENTITY_MISMATCH, PROVIDER_ERROR.
+  outcome        String
+  /// The provider's own identifier, so a dispute can be traced without holding the report.
+  providerRef    String?
+  provider       String
+  pulledAt       DateTime      @default(now())
+  /// A band goes stale; past this the panel shows it as needing a refresh.
+  staleAfter     DateTime
+
+  @@index([studentUserId, pulledAt])
+  @@index([organizationId])
+  @@map("credit_checks")
+}
+
+/// Every attempt to reach a bureau, including the ones that failed.
+///
+/// Append-only and separate from `CreditCheck`, because a bureau contract asks
+/// who tried, not only what succeeded.
+model BureauPullAudit {
+  id             String   @id @default(uuid())
+  studentUserId  String?
+  organizationId String?
+  /// The officer or student who caused it.
+  actorUserId    String?
+  consentId      String?
+  kind           String
+  provider       String
+  /// OK, DENIED_NO_CONSENT, DENIED_EXPIRED, PROVIDER_ERROR, IDENTITY_MISMATCH.
+  result         String
+  detail         String?
+  at             DateTime @default(now())
+
+  @@index([organizationId, at])
+  @@index([studentUserId, at])
+  @@map("bureau_pull_audits")
+}
+
+/// A partner bank's own bureau membership, used to pull under their entitlement
+/// rather than the platform's.
+///
+/// The certificate and its password are never stored here — only a reference
+/// into the secrets store, so a database dump cannot be used to impersonate a
+/// bank at a credit bureau.
+model OrganizationBureauCredential {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider       String
+  /// The bank's member identifier with the bureau. Not secret on its own.
+  memberId       String
+  /// Where the certificate and key actually live: a secrets-manager key, never the material.
+  secretRef      String
+  /// So a rotation can be confirmed without reading the secret back.
+  certFingerprint String?
+  validFrom      DateTime?
+  /// Certificates expire; the panel warns before a pull starts failing silently.
+  validUntil     DateTime?
+  status         String       @default("ACTIVE")
+  rotatedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("organization_bureau_credentials")
 }

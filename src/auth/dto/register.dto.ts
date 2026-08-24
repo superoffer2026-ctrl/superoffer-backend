@@ -50,7 +50,9 @@ export class RegisterDto {
   @IsNotEmpty()
   role!: string;
 
+  /** Required for institution roles; students have no organization. */
+  @IsOptional()
   @ValidateNested()
   @Type(() => OrganizationRegistrationDto)
-  organization!: OrganizationRegistrationDto;
+  organization?: OrganizationRegistrationDto;
 }

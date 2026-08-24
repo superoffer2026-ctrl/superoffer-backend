@@ -28,7 +28,7 @@ when the docs and the frontend disagree, the frontend wins — and please fix th
 |---|---|---|
 | 01 | [System Overview](01-System-Overview.md) | Who the users are, what the portals do, how a user flows through the product |
 | 02 | [API Contract](02-API-Contract.md) | Every endpoint, with request and response shapes |
-| 03 | [Data Models](03-Data-Models.md) | MongoDB collections and Mongoose schemas |
+| 03 | [Data Models](03-Data-Models.md) | The data each module stores, and why |
 | 04 | [Student Profile Module](04-Student-Profile-Module.md) | The 9-step wizard: every field and validation rule |
 | 05 | [Organization Module](05-Organization-Module.md) | Universities and banks: products, criteria, discovery, team, subscription |
 | 06 | [Offers Module](06-Offers-Module.md) | Offers, invitations, negotiation, the student wallet |
@@ -55,5 +55,26 @@ design. Deciding them after the fact means migrations.
 
 ## Current state
 
-Step 1 (foundation) is built: config, MongoDB connection, Express app, error
-handling, `GET /api/v1/health`. Nothing else exists yet.
+**Stack:** NestJS · Prisma · PostgreSQL. These documents were written against an
+earlier Express + MongoDB plan; the schema advice in 03 and 05 should be read as
+*what to store*, not *how to store it*. `prisma/schema.prisma` is the source of
+truth for shapes, and `API_DOCUMENTATION.md` for the live API.
+
+Built and verified end to end:
+
+- **Auth** — institution email/password with approval gating and lockout; student
+  phone + WhatsApp OTP.
+- **Reference data** — all eight `/reference/*` endpoints (Step 2 of the build
+  order), generated from the master data sheet. See 08.
+- **Student profile** — the nine-step wizard's eight section endpoints, each
+  validated against the same constants the reference endpoints serve, with the
+  derived-value rules from 09 enforced server-side.
+- **Documents** — upload, replace, preview, delete.
+- **Offers** — the model, the student wallet, the organization side, and the
+  lifecycle rules from 06 (14-day expiry, terminal states, one-way withdrawal).
+- **Discovery** — organization-side student search over submitted profiles.
+- **Admin** — approval queue and audit log.
+
+Open decisions 1, 2, 3, 6, 7, 8, 10 and 11 in [10-Open-Decisions.md](10-Open-Decisions.md)
+have been resolved by the implementation; that document records the reasoning but
+no longer describes open questions.

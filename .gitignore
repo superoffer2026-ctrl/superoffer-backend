@@ -3,3 +3,7 @@ dist/
 .env
 coverage/
 uploads/
+
+# Bank bureau certificates. Encrypted at rest, but material like this never
+# belongs in version control under any circumstances.
+.secrets/

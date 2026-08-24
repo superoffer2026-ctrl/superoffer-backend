@@ -1,6 +1,6 @@
 # 03 — Data Models
 
-Proposed MongoDB collections. Shapes are dictated by the frontend
+The data each module stores. Shapes are dictated by the frontend
 (see [02](02-API-Contract.md), [04](04-Student-Profile-Module.md),
 [05](05-Organization-Module.md)); the *structure* is a recommendation.
 

@@ -10,14 +10,34 @@ All request/response examples below are taken from live test runs against a real
 
 ## Authentication
 
-Two separate login mechanisms by role:
-- **Institution roles** (`UNIVERSITY_OFFICER`, `LOAN_OFFICER`, `CONSULTANT`) — email + password, gated behind Super Admin approval.
-- **`STUDENT`** — phone number + WhatsApp OTP, no password. Registering/logging in with a password is rejected for this role.
+**Every role signs in with email + password.** Institution roles
+(`UNIVERSITY_OFFICER`, `LOAN_OFFICER`, `CONSULTANT`) are additionally gated behind Super Admin
+approval; students can sign in as soon as they register.
+
+The WhatsApp OTP endpoints below still exist and still work — they are the planned student
+sign-in method once a WhatsApp API is available, but nothing uses them today.
 
 Authenticated requests use `Authorization: Bearer <access_token>`.
 
 ### `POST /auth/register`
-Registers an institution officer and their organization. Always starts `PENDING` — login is blocked until a Super Admin approves it.
+Registers a student, or an institution officer together with their organization.
+
+Students send `role: "STUDENT"` and **omit** `organization`; they get `approval_status: "APPROVED"`
+and can log in immediately. Institution roles must include `organization` and always start
+`PENDING` — login is blocked until a Super Admin approves them.
+
+```json
+// Request — student
+{
+  "email": "aarav@example.com",
+  "password": "Password123",
+  "fullName": "Aarav Mehta",
+  "role": "STUDENT"
+}
+```
+
+```json
+// Request — institution
 
 ```json
 // Request
@@ -49,14 +69,14 @@ Registers an institution officer and their organization. Always starts `PENDING`
 
 | Error | Status | Code |
 |---|---|---|
-| Role is `STUDENT` | 400 | `STUDENT_USES_OTP_LOGIN` |
 | Unknown/invalid role | 400 | `INVALID_ROLE` |
+| Institution role without organization details | 400 | `ORGANIZATION_REQUIRED` |
 | Email already registered | 409 | `EMAIL_ALREADY_REGISTERED` |
 | Phone already registered | 409 | `PHONE_ALREADY_REGISTERED` |
 | Bad email/weak password | 400 | class-validator message |
 
 ### `POST /auth/login`
-Password login for institution roles. `identifier` accepts email (or phone, for completeness).
+Password login for every role. `identifier` accepts an email (or a phone number).
 
 ```json
 // Request
@@ -87,7 +107,6 @@ Password login for institution roles. `identifier` accepts email (or phone, for 
 
 | Error | Status | Code |
 |---|---|---|
-| Student tries password login | 400 | `STUDENT_USES_OTP_LOGIN` |
 | Wrong email/password | 401 | `INVALID_CREDENTIALS` |
 | 5 failed attempts in a row | 423 | `ACCOUNT_LOCKED` (`retry_after_seconds` in body, 900s lock) |
 | Organization still pending | 403 | `ACCOUNT_PENDING_APPROVAL` |
@@ -290,8 +309,95 @@ Returns the full updated profile (200 OK).
 ### `POST /students/me/submit`
 Marks the profile `SUBMITTED` and stamps `submittedAt`. 200 OK, returns the full profile.
 
-### `GET /students/me/offers`
-Stub for forward compatibility with the frontend — always `{ "results": [], "total_results": 0 }` today (no Invitations/Offers module built yet).
+### Wizard section endpoints
+
+One endpoint per section of the nine-step wizard; each writes exactly one column of `student_profiles`. All are `PUT`, all take JSON, all return the updated profile.
+
+| Path | Payload |
+|---|---|
+| `/students/me/personal-information` | `fullName`, `email`, `mobileCountry`, `mobileNumber`, `altMobileCountry?`, `altMobileNumber?`, `country`, `city`, `phone?`, `location?` |
+| `/students/me/study-preferences` | `countries[]`, `studyLevel[]`, `fieldOfInterest[]`, `startYear[]`, `intake[]` |
+| `/students/me/academic-information` | `qualificationLevel`, `history[]`, plus optional flat fields (recomputed server-side) |
+| `/students/me/english-exam` | `englishExams[]` of `{exam, status, score?, expectedScore?, currentScore?}` |
+| `/students/me/competitive-exam` | `competitiveExams[]`, same entry shape |
+| `/students/me/work-experience` | `workStatus`, `relevantYears?`, `nonRelevantYears?`, `experiences[]` |
+| `/students/me/financial-information` | `fundingSource`, `earningMembers[]`, per-earner incomes, `currency`, `employmentCategory`, `needsLoan`, both declarations |
+| `/students/me/projects-achievements` | `projects[]`, `achievements[]`, `links[]` |
+
+Every value validated against a fixed list is checked against **the same constants `/reference/*` serves**, so a student can never be offered an option the server rejects.
+
+Rules enforced here rather than trusted from the client:
+
+| Rule | Behaviour |
+|---|---|
+| Exam status decides required scores | `I have the score` needs `score`; `Awaiting Result`/`Yet to be taken` need `expectedScore`; `Retake` needs both current and expected → 400 otherwise |
+| Income follows earning members | An income is required for each declared earner, and `annualHouseholdIncome` is recomputed from them |
+| Both declarations must be true | 400 unless `declarationAccurate` and `declarationConsent` are both accepted |
+| Highest qualification drives flat fields | `institution`, `score`, `graduationYear`, `qualification` derived from the last history entry |
+| MBBS-only destinations force the study level | Selecting one rewrites `studyLevel` to `['MBBS']` |
+| Work years only count when employed | Years and entries are cleared unless `workStatus` is `Yes` |
+
+`POST /students/me/submit` refuses with `PROFILE_INCOMPLETE` (400) until `GET /students/me/completion` reports 100%.
+
+---
+
+## Reference data (public, no auth)
+
+Eight `GET` endpoints under `/reference`, cached for a day. Data is generated from the SuperOffer master data sheet — see `src/reference/data/master-sheet.data.ts`.
+
+| Path | Returns |
+|---|---|
+| `/reference/geo` | `countries[{name,iso2,dial}]` (200), `indiaCities[]` |
+| `/reference/study-preferences` | `studyCountries[]` (50), `mbbsOnlyCountries[]` (22), `fieldsOfStudy[]` (279), `intakeOptions[]`, `startYears[]` |
+| `/reference/academic-information` | `qualificationOptions[]`, `curriculumOptions[]`, `educationGapOptions[]`, `educationYears[]`, `universityOptions[]` (1,425) |
+| `/reference/english-exam` | `englishExamOptions[]`, `examStatusOptions[]` |
+| `/reference/competitive-exam` | `competitiveExamOptions[]`, `examStatusOptions[]` |
+| `/reference/work-experience` | `employmentTypes[]` |
+| `/reference/financial-information` | `fundingSourceOptions[]`, `employmentCategoryOptions[]`, `earningMemberOptions[]`, `currencyOptions[]`, `financialDocumentFields[]` |
+| `/reference/projects-achievements` | `achievementSuggestions[]` |
+
+---
+
+## Offers
+
+### Student side 🔒 (role: `STUDENT`)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/students/me/offers` | Offers in the shape the wallet renders, plus `counts` |
+| `POST` | `/students/me/offers/:id/view` | Marks viewed; advances the organization-side status to `VIEWED` |
+| `PATCH` | `/students/me/offers/:id/flags` | `saved`, `favourite`, `compared` |
+| `PATCH` | `/students/me/offers/:id/decision` | `Pending` \| `Shortlisted` \| `Accepted` \| `Rejected` |
+| `POST` | `/students/me/offers/:id/messages` | A student reply moves the offer to `NEGOTIATING` |
+
+### Organization side 🔒 (roles: `UNIVERSITY_OFFICER`, `LOAN_OFFICER`, `CONSULTANT`, organization must be `APPROVED`)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/organizations/me/offers?status=` | Sent offers plus a status summary |
+| `POST` | `/organizations/me/offers` | `studentUserId`, `category`, `program`, `headline`, `terms`, … `responseWindowDays?` (default 14) |
+| `POST` | `/organizations/me/offers/:id/withdraw` | One-way, and only while the offer is open |
+| `POST` | `/organizations/me/offers/:id/messages` | |
+
+| Rule | Behaviour |
+|---|---|
+| 14-day auto-expiry | Offers past their window are marked `EXPIRED` on read |
+| Terminal states are final | `ACCEPTED`/`REJECTED`/`WITHDRAWN`/`EXPIRED` reject further changes with `OFFER_CLOSED` |
+| Only submitted students receive offers | `STUDENT_NOT_DISCOVERABLE` (400) otherwise |
+
+---
+
+## Organization discovery 🔒
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/organizations/me/profile` | The officer's organization and its verification status |
+| `GET` | `/organizations/me/students` | Submitted profiles, projected into the workspace card shape |
+| `GET` | `/organizations/me/students/:id` | One student |
+
+Filters: `course`, `degree`, `country`, `intake`, `cgpaMin`, `englishTest`, `englishScoreMin`, `greMin`, `gmatMin`, `backlogsMax`, `workExperienceMin`, `scholarship`, `familyIncomeMax`, `requiredLoanMax`, `offerStatus`, `visibility` (bank-only), `search`.
+
+Only `SUBMITTED` profiles are returned. Match score, household income and eligibility are computed server-side.
 
 ---
 
@@ -317,5 +423,7 @@ All document endpoints verify the document belongs to the requesting student (`4
 
 ## Notes for the next phase
 
-- WhatsApp OTP delivery is currently a **mock sender** (logs the code, doesn't message a real phone). A production `MetaWhatsAppSender` is already implemented and wired — switching is just setting `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` in the environment. Swapping to an email-based OTP later would mean adding an `EmailSender` alongside the existing `WhatsAppSender` interface — no changes needed to the OTP request/verify logic itself.
-- Not yet built: University/Loan/Consultant search, Invitations & Offers, Notifications, Subscriptions/Billing, Reports/Analytics, AI Matching, Settings. The current frontend doesn't render UI for most of these yet either.
+- **WhatsApp OTP is built but not in use.** `/auth/otp/request` and `/auth/otp/verify` work, backed by a mock sender that logs the code instead of messaging a phone. A production `MetaWhatsAppSender` is implemented and wired — switching is just setting `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID`. To make it the student sign-in method again, point the frontend auth page at those two endpoints; the backend needs no change. Swapping to an email-based OTP would mean adding an `EmailSender` alongside the existing `WhatsAppSender` interface.
+- Discovery filtering runs in memory over submitted profiles, because the profile lives in JSON columns. Move the hot filters into SQL (or a projection table) once the student count outgrows a page of results.
+- Offer expiry is applied lazily on read. A scheduled job would be better once one exists.
+- Not yet built: notifications, subscriptions/billing, reports & analytics beyond the workspace's own aggregates, and the AI-matching service. The organization workspace renders these from local demo data today.

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ApprovalStatus, OrganizationType } from '@prisma/client';
+import { ApprovalStatus, OrganizationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const APPROVAL_STATUSES = new Set(['PENDING', 'APPROVED', 'REJECTED']);
@@ -105,6 +105,212 @@ export class AdminService {
       can_login: organization.verificationStatus === 'APPROVED',
       reviewed_at: organization.reviewedAt
     };
+  }
+
+  /** Platform totals for the admin dashboard — all counted from the database. */
+  async stats() {
+    const [students, organizations, offers, submittedProfiles] = await Promise.all([
+      this.prisma.user.count({ where: { role: 'STUDENT' } }),
+      this.prisma.organization.findMany({ select: { organizationType: true, verificationStatus: true, plan: true } }),
+      this.prisma.offer.findMany({ select: { status: true } }),
+      this.prisma.studentProfile.count({ where: { status: 'SUBMITTED' } })
+    ]);
+
+    const verified = (type: OrganizationType) =>
+      organizations.filter(org => org.organizationType === type && org.verificationStatus === 'APPROVED').length;
+
+    const officers = await this.prisma.user.groupBy({ by: ['role'], _count: { role: true } });
+    const roleCount = (role: string) => officers.find(entry => entry.role === role)?._count.role ?? 0;
+
+    const accepted = offers.filter(offer => offer.status === 'ACCEPTED').length;
+    const planCount = (plan: string) => organizations.filter(org => org.plan === plan).length;
+
+    return {
+      students,
+      submittedProfiles,
+      universities: verified('UNIVERSITY'),
+      banks: verified('BANK'),
+      consultancies: verified('CONSULTANCY'),
+      pendingVerifications: organizations.filter(org => org.verificationStatus === 'PENDING').length,
+      invitationVolume: offers.length,
+      acceptanceRate: offers.length ? Math.round((accepted / offers.length) * 100) : 0,
+      roleBreakdown: [
+        { label: 'Students', count: students },
+        { label: 'University officers', count: roleCount('UNIVERSITY_OFFICER') },
+        { label: 'Loan officers', count: roleCount('LOAN_OFFICER') },
+        { label: 'Consultants', count: roleCount('CONSULTANT') }
+      ],
+      subscription: {
+        tiers: ['Basic', 'Professional', 'Enterprise'].map(name => ({ name, orgs: planCount(name) }))
+      },
+      recentSubmissions: await this.recentSubmissions()
+    };
+  }
+
+  private async recentSubmissions() {
+    const organizations = await this.prisma.organization.findMany({
+      orderBy: { submittedAt: 'desc' },
+      take: 4,
+      select: { id: true, name: true, organizationType: true, submittedAt: true, verificationStatus: true }
+    });
+    const label: Record<string, string> = { UNIVERSITY: 'University', BANK: 'Education lender', CONSULTANCY: 'Consultancy' };
+    return organizations.map(org => ({
+      id: org.id,
+      initial: org.name.charAt(0).toUpperCase(),
+      name: org.name,
+      type: label[org.organizationType] || org.organizationType,
+      submittedAt: org.submittedAt,
+      status: org.verificationStatus === 'APPROVED' ? 'Verified' : org.verificationStatus === 'REJECTED' ? 'Rejected' : 'Pending'
+    }));
+  }
+
+  /**
+   * Authentication attempts, filtered, sorted and paginated server-side so the
+   * panel renders exactly what it is given.
+   */
+  async authLogs(query: {
+    search?: string;
+    role?: string;
+    outcome?: string;
+    sort?: string;
+    direction?: string;
+    page?: string;
+    pageSize?: string;
+  }) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 10));
+
+    const sortable = ['occurredAt', 'email', 'role', 'outcome'] as const;
+    const sort = (sortable as readonly string[]).includes(query.sort || '') ? (query.sort as string) : 'occurredAt';
+    const direction = query.direction === 'asc' ? 'asc' : 'desc';
+
+    const where: Prisma.LoginEventWhereInput = {
+      ...(query.role ? { role: query.role } : {}),
+      ...(query.outcome ? { outcome: query.outcome.toUpperCase() } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { email: { contains: query.search, mode: 'insensitive' as const } },
+              { ip: { contains: query.search } },
+              { user: { fullName: { contains: query.search, mode: 'insensitive' as const } } }
+            ]
+          }
+        : {})
+    };
+
+    const [total, rows] = await Promise.all([
+      this.prisma.loginEvent.count({ where }),
+      this.prisma.loginEvent.findMany({
+        where,
+        include: { user: { select: { fullName: true } } },
+        orderBy: { [sort]: direction },
+        skip: (page - 1) * pageSize,
+        take: pageSize
+      })
+    ]);
+
+    return {
+      rows: rows.map(row => ({
+        id: row.id,
+        userName: row.user?.fullName || 'Unknown',
+        email: row.email,
+        role: row.role || '—',
+        outcome: row.outcome,
+        ip: row.ip || '—',
+        userAgent: row.userAgent || '—',
+        occurredAt: row.occurredAt
+      })),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize))
+    };
+  }
+
+  /**
+   * Message threads, for resolving a dispute between a student and an
+   * organization. Reading one is itself recorded in the audit log, so there is a
+   * trail of which admin looked at whose conversation.
+   */
+  async conversations(query: { search?: string; page?: string; pageSize?: string }) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number(query.pageSize) || 10));
+
+    const where: Prisma.OfferWhereInput = {
+      messages: { some: {} },
+      ...(query.search
+        ? {
+            OR: [
+              { organization: { name: { contains: query.search, mode: 'insensitive' as const } } },
+              { student: { fullName: { contains: query.search, mode: 'insensitive' as const } } },
+              { student: { email: { contains: query.search, mode: 'insensitive' as const } } },
+              { program: { contains: query.search, mode: 'insensitive' as const } }
+            ]
+          }
+        : {})
+    };
+
+    const [total, offers] = await Promise.all([
+      this.prisma.offer.count({ where }),
+      this.prisma.offer.findMany({
+        where,
+        include: {
+          organization: { select: { name: true, organizationType: true } },
+          student: { select: { fullName: true, email: true } },
+          messages: { orderBy: { sentAt: 'asc' } }
+        },
+        orderBy: { updatedAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize
+      })
+    ]);
+
+    return {
+      conversations: offers.map(offer => ({
+        offerId: offer.id,
+        organization: offer.organization.name,
+        organizationType: offer.organization.organizationType,
+        student: offer.student?.fullName || offer.student?.email || 'Student',
+        studentEmail: offer.student?.email || '',
+        program: offer.program,
+        status: offer.status,
+        messageCount: offer.messages.length,
+        lastMessageAt: offer.messages[offer.messages.length - 1]?.sentAt || offer.createdAt,
+        messages: offer.messages.map(message => ({
+          id: message.id,
+          from: message.sender,
+          author: message.authorName,
+          body: message.body,
+          sentAt: message.sentAt,
+          /** An admin reviewing a complaint has to know which lines a rule wrote. */
+          automatic: message.automatic,
+          ruleId: message.ruleId,
+          attachment: message.storagePath ? { fileName: message.fileName, mimeType: message.mimeType, size: message.fileSize } : null
+        }))
+      })),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize))
+    };
+  }
+
+  /** Records that an admin opened a specific thread. */
+  async recordConversationAccess(offerId: string, actor: string) {
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+      include: { organization: { select: { name: true } } }
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'CONVERSATION_VIEWED',
+        entityId: offerId,
+        organizationName: offer?.organization.name,
+        actorUserId: actor,
+        reason: 'Support or dispute review'
+      }
+    });
+    return { recorded: true };
   }
 
   async auditLog(limit?: number) {
