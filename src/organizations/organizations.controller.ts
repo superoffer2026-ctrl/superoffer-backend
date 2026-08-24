@@ -14,6 +14,7 @@ import {
   ShortlistDto,
   TeamInviteDto
 } from './dto/organization.dto';
+import { OfferTemplatesService, type OfferTemplateInput } from './offer-templates.service';
 import { OrganizationsService } from './organizations.service';
 
 @ApiTags('organizations')
@@ -22,7 +23,11 @@ import { OrganizationsService } from './organizations.service';
 @Roles('UNIVERSITY_OFFICER', 'LOAN_OFFICER', 'CONSULTANT')
 @Controller('organizations/me')
 export class OrganizationsController {
-  constructor(private organizations: OrganizationsService, private discovery: DiscoveryService) {}
+  constructor(
+    private organizations: OrganizationsService,
+    private discovery: DiscoveryService,
+    private templates: OfferTemplatesService
+  ) {}
 
   // ── Profile, criteria, subscription, notification preferences ─────────────
 
@@ -68,6 +73,43 @@ export class OrganizationsController {
   @Delete('products/:id')
   archiveProduct(@Req() request: { organization: Organization }, @Param('id') id: string) {
     return this.organizations.archiveProduct(request.organization.id, id);
+  }
+
+  // ── The offers a product is prepared to make ─────────────────────────────
+
+  /** Every template this organisation has, so the products page can show them. */
+  @Get('offer-templates')
+  allTemplates(@Req() request: { organization: Organization }) {
+    return this.templates.listAll(request.organization);
+  }
+
+  @Get('products/:productId/templates')
+  templatesFor(@Req() request: { organization: Organization }, @Param('productId') productId: string) {
+    return this.templates.list(request.organization, productId);
+  }
+
+  @Post('products/:productId/templates')
+  createTemplate(
+    @Req() request: { organization: Organization },
+    @Param('productId') productId: string,
+    @Body() body: OfferTemplateInput
+  ) {
+    return this.templates.create(request.organization, productId, body);
+  }
+
+  @Patch('offer-templates/:id')
+  updateTemplate(
+    @Req() request: { organization: Organization },
+    @Param('id') id: string,
+    @Body() body: Partial<OfferTemplateInput>
+  ) {
+    return this.templates.update(request.organization, id, body);
+  }
+
+  /** Archived, not deleted: offers already sent on it still point here. */
+  @Delete('offer-templates/:id')
+  archiveTemplate(@Req() request: { organization: Organization }, @Param('id') id: string) {
+    return this.templates.archive(request.organization, id);
   }
 
   @Post('products/import')

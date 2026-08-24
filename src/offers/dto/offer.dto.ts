@@ -15,6 +15,10 @@ import {
 export const OFFER_CATEGORIES = ['UNIVERSITY', 'BANK', 'SCHOLARSHIP', 'CONSULTANCY'] as const;
 
 export class CreateOfferDto {
+  /** The template this offer went out on, when it came from one. */
+  @IsOptional() @IsString()
+  templateId?: string;
+
   @IsString() @IsNotEmpty()
   studentUserId!: string;
 

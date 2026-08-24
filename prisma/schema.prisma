@@ -258,21 +258,59 @@ model StudentProfile {
 /// A course or loan product an organization recruits/lends against. Replaces the
 /// catalog the workspace used to keep in localStorage.
 model OrganizationProduct {
-  id             String       @id @default(uuid())
+  id             String          @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
   /// "Academic Product" or "Financial Product" — drives which offer-condition presets apply.
   category       String?
   url            String?
   /// Category-specific detail (tuition, intakes, rate bands) kept flexible while the UI settles.
-  terms          Json         @default("{}")
+  terms          Json            @default("{}")
+  /// The offers this product is willing to make. One is the default.
+  templates      OfferTemplate[]
   archivedAt     DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   @@index([organizationId])
   @@map("organization_products")
+}
+
+/// An offer a product is prepared to make, written once and sent many times.
+///
+/// Terms belong here rather than being typed per invitation: an officer choosing
+/// a product is choosing terms the organisation already agreed to, which is what
+/// makes a one-click invitation safe to offer at all.
+model OfferTemplate {
+  id             String              @id @default(uuid())
+  productId      String
+  product        OrganizationProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Denormalised so a template can be found without joining through the product.
+  organizationId String
+  name           String
+  description    String?
+  /// The offer's figures, in the vocabulary the comparison and valuation read.
+  terms          Json                @default("{}")
+  /// What the student sees first, e.g. "40% tuition".
+  value          String?
+  valueLabel     String?
+  conditions     String?
+  nextSteps      String[]            @default([])
+  /// Days the student has to respond. Absent falls back to the platform default.
+  responseWindowDays Int?
+  /// The one a single-click invitation uses. Exactly one per product.
+  isDefault      Boolean             @default(false)
+  archivedAt     DateTime?
+  /// How many invitations have gone out on it, so a dead template is visible.
+  usedCount      Int                 @default(0)
+  offers         Offer[]
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([organizationId])
+  @@index([productId, isDefault])
+  @@map("offer_templates")
 }
 
 /// An organization's saved students. Was a localStorage set of names.
@@ -346,6 +384,10 @@ model Offer {
   studentUserId   String
   student         User            @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
   category        OfferCategory
+  /// The template this went out on, when it came from one. Null for a hand-written
+  /// offer, so "which template converts" stays an answerable question.
+  templateId      String?
+  template        OfferTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
   program         String
   headline        String
   status          OfferStatus     @default(SENT)

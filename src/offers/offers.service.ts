@@ -477,13 +477,75 @@ export class OffersService {
         intake: dto.intake,
         valueLabel: dto.valueLabel,
         value: dto.value,
+        templateId: dto.templateId ?? null,
         expiresAt: new Date(Date.now() + windowDays * 24 * 60 * 60 * 1000)
       },
       include: { organization: true, messages: true, student: true }
     });
 
+    /** Counted so a template nobody uses is visible as such. */
+    if (dto.templateId) {
+      await this.prisma.offerTemplate.update({
+        where: { id: dto.templateId },
+        data: { usedCount: { increment: 1 } }
+      }).catch(() => undefined);
+    }
+
     await this.automation.run('offer.sent', { offer, actor: 'organization', triggerRef: 'sent' });
     return this.toOrganizationOffer(await this.findOwnedByOrganization(organization.id, offer.id));
+  }
+
+  /**
+   * One click: a product, a student, and the terms the organisation already
+   * agreed to for that product.
+   *
+   * Nothing about the offer is composed here. The template decides the figures,
+   * the conditions and the response window, which is the whole reason a single
+   * click is a responsible thing to offer an officer.
+   */
+  async quickInvite(
+    organization: Organization,
+    input: { studentUserId: string; productId: string; templateId?: string },
+    senderName: string
+  ) {
+    const template = input.templateId
+      ? await this.prisma.offerTemplate.findFirst({
+          where: { id: input.templateId, organizationId: organization.id, archivedAt: null }
+        })
+      : await this.prisma.offerTemplate.findFirst({
+          where: { productId: input.productId, organizationId: organization.id, archivedAt: null, isDefault: true }
+        });
+
+    if (!template) {
+      throw new BadRequestException({
+        code: 'NO_DEFAULT_TEMPLATE',
+        message: 'This product has no offer template yet. Add one before inviting with a single click.'
+      });
+    }
+
+    const product = await this.prisma.organizationProduct.findFirst({
+      where: { id: template.productId, organizationId: organization.id }
+    });
+    if (!product) {
+      throw new NotFoundException({ code: 'PRODUCT_NOT_FOUND', message: 'No such product' });
+    }
+
+    return this.create(
+      organization,
+      {
+        studentUserId: input.studentUserId,
+        program: product.name,
+        headline: template.name,
+        terms: (template.terms as Record<string, unknown>) || {},
+        conditions: template.conditions || undefined,
+        nextSteps: template.nextSteps,
+        valueLabel: template.valueLabel || undefined,
+        value: template.value || undefined,
+        responseWindowDays: template.responseWindowDays || undefined,
+        templateId: template.id
+      } as CreateOfferDto,
+      senderName
+    );
   }
 
   async listForOrganization(organizationId: string, status?: string) {

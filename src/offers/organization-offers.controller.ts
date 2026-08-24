@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards , Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { messageAttachmentInterceptor } from './message-attachment';
@@ -24,6 +24,20 @@ export class OrganizationOffersController {
   @Get()
   list(@Req() request: { organization: Organization }, @Query('status') status?: string) {
     return this.offers.listForOrganization(request.organization.id, status);
+  }
+
+  /**
+   * One click from a candidate: pick the product, send the offer its template
+   * already describes. Nothing about the terms is composed here.
+   */
+  @Post('quick-invite')
+  @HttpCode(HttpStatus.CREATED)
+  quickInvite(
+    @Req() request: { organization: Organization },
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: { studentUserId: string; productId: string; templateId?: string }
+  ) {
+    return this.offers.quickInvite(request.organization, body, user.email || 'Admissions team');
   }
 
   @Post()
