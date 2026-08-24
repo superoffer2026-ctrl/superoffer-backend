@@ -27,7 +27,10 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY package*.json ./
 
-RUN mkdir -p uploads/student-documents && chown -R node:node /app
+# Both of these are mount points for persistent volumes. They are created here so
+# the container still starts when a volume is absent, and owned by the runtime
+# user so it can write to them once one is attached.
+RUN mkdir -p uploads/student-documents /data/secrets  && chown -R node:node /app /data
 
 ENV HOST=0.0.0.0
 ENV PORT=3000
