@@ -11,7 +11,13 @@ async function bootstrap() {
     .split(',')
     .map(origin => origin.trim())
     .filter(Boolean);
-  app.enableCors({ origin: corsOrigins, credentials: true });
+  /**
+   * The portal and the API sit on different hosts, so a browser preflights
+   * before most calls. Without a max-age it re-asks permission every time,
+   * which doubles the request count on pages that poll for unread messages.
+   * Two hours is the ceiling Chrome honours; browsers cap it themselves.
+   */
+  app.enableCors({ origin: corsOrigins, credentials: true, maxAge: 7200 });
 
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));
