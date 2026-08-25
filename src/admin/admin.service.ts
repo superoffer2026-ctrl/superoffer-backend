@@ -137,8 +137,7 @@ export class AdminService {
       roleBreakdown: [
         { label: 'Students', count: students },
         { label: 'University officers', count: roleCount('UNIVERSITY_OFFICER') },
-        { label: 'Loan officers', count: roleCount('LOAN_OFFICER') },
-        { label: 'Consultants', count: roleCount('CONSULTANT') }
+        { label: 'Loan officers', count: roleCount('LOAN_OFFICER') }
       ],
       subscription: {
         tiers: ['Basic', 'Professional', 'Enterprise'].map(name => ({ name, orgs: planCount(name) }))

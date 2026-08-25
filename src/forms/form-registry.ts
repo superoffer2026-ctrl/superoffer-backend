@@ -48,8 +48,7 @@ const PRODUCT_DEPENDENCIES: EngineDependency[] = [
 
 const ORG_VARIANTS = [
   { variant: 'UNIVERSITY', label: 'Universities' },
-  { variant: 'BANK', label: 'Education lenders' },
-  { variant: 'CONSULTANCY', label: 'Consultancies' }
+  { variant: 'BANK', label: 'Education lenders' }
 ];
 
 export const FORM_REGISTRY: Record<FormKey, FormDescriptor> = {

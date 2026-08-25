@@ -2,6 +2,17 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { AutomationRule, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  FIELD_CATALOGUE,
+  OPERATORS_BY_TYPE,
+  OPERATOR_LABELS,
+  validateCondition,
+  ConditionNode,
+  contextValues,
+  describe as describeCondition,
+  evaluate as evaluateCondition,
+  normalizeCondition
+} from './automation.conditions';
+import {
   AUTOMATION_EVENTS,
   AutomationContext,
   AutomationEvent,
@@ -65,6 +76,11 @@ export class AutomationService {
 
       for (const rule of rules) {
         if (!this.matches(rule, context)) continue;
+        /** A rule that asked to wait joins the queue instead of posting now. */
+        if (rule.delayMinutes > 0) {
+          await this.schedule(rule, context);
+          continue;
+        }
         if (await this.write(rule, context)) written++;
       }
 
@@ -78,16 +94,146 @@ export class AutomationService {
     }
   }
 
-  /** Optional narrowing, e.g. only for lenders. */
+  /**
+   * Whether this rule speaks for this event. A rule with no condition always
+   * does; anything else is decided by the condition engine, which reads only
+   * the documented context and never throws.
+   */
   private matches(rule: AutomationRule, context: AutomationContext): boolean {
-    const condition = rule.condition as Record<string, string> | null;
-    if (!condition) return true;
+    return evaluateCondition(normalizeCondition(rule.condition), contextValues(context));
+  }
 
-    if (condition.organizationType && context.offer.organization.organizationType !== condition.organizationType) {
-      return false;
+  /**
+   * A delayed rule waits rather than posting. The row carries what it reacted
+   * to, so re-emitting the same event cannot queue the nudge twice — the unique
+   * index refuses it, exactly as it does for an immediate write.
+   */
+  private async schedule(rule: AutomationRule, context: AutomationContext): Promise<boolean> {
+    const dueAt = new Date(Date.now() + rule.delayMinutes * 60_000);
+    try {
+      await this.prisma.scheduledAutomation.create({
+        data: {
+          ruleId: rule.id,
+          offerId: context.offer.id,
+          triggerRef: context.triggerRef,
+          actor: context.actor,
+          extra: (context.extra ?? undefined) as Prisma.InputJsonValue | undefined,
+          dueAt
+        }
+      });
+      return true;
+    } catch (error) {
+      if ((error as Prisma.PrismaClientKnownRequestError).code === 'P2002') return false;
+      throw error;
     }
-    if (condition.category && context.offer.category !== condition.category) return false;
-    return true;
+  }
+
+  /**
+   * Sends whatever has come due.
+   *
+   * Rows are claimed with a conditional update, so two instances running this
+   * at the same moment cannot both send the same message: only one update
+   * matches a PENDING row.
+   *
+   * A guard is re-read here rather than at trigger time, which is the point of
+   * waiting — a reminder written three days ago must not go out to a student
+   * who replied yesterday. Not sending is an outcome the row records, not a
+   * failure it hides.
+   */
+  async dispatchDue(now = new Date(), limit = 50): Promise<{ sent: number; skipped: number }> {
+    const due = await this.prisma.scheduledAutomation.findMany({
+      where: { status: 'PENDING', dueAt: { lte: now } },
+      orderBy: { dueAt: 'asc' },
+      take: limit,
+      select: { id: true }
+    });
+
+    let sent = 0;
+    let skipped = 0;
+
+    for (const { id } of due) {
+      /** Claiming and running are separate, so a crash leaves a claimed row to retry. */
+      const claimed = await this.prisma.scheduledAutomation.updateMany({
+        where: { id, status: 'PENDING' },
+        data: { status: 'CLAIMED', claimedAt: new Date(), attempts: { increment: 1 } }
+      });
+      if (!claimed.count) continue;
+
+      const row = await this.prisma.scheduledAutomation.findUnique({
+        where: { id },
+        include: {
+          rule: true,
+          offer: { include: { organization: true, student: true } }
+        }
+      });
+      if (!row) continue;
+
+      try {
+        const context: AutomationContext = {
+          offer: row.offer,
+          actor: row.actor as 'student' | 'organization',
+          triggerRef: row.triggerRef,
+          extra: (row.extra as Record<string, string> | null) ?? undefined
+        };
+
+        if (!row.rule.enabled) {
+          await this.settle(id, 'SKIPPED', 'The rule was switched off while this was waiting');
+          skipped++;
+          continue;
+        }
+
+        const guard = normalizeCondition(row.rule.guard);
+        if (!evaluateCondition(guard, contextValues(context))) {
+          await this.settle(id, 'SKIPPED', `No longer true: ${describeCondition(guard)}`);
+          skipped++;
+          continue;
+        }
+
+        const written = await this.write(row.rule, context);
+        if (written) {
+          await this.touchReadState(row.rule.event as AutomationEvent, context, 1);
+          await this.settle(id, 'SENT', null);
+          sent++;
+        } else {
+          await this.settle(id, 'SKIPPED', 'This message had already been posted');
+          skipped++;
+        }
+      } catch (error) {
+        this.logger.error(`Scheduled automation ${id} failed: ${(error as Error).message}`);
+        await this.settle(id, 'FAILED', (error as Error).message);
+      }
+    }
+
+    return { sent, skipped };
+  }
+
+  private settle(id: string, status: string, skipReason: string | null) {
+    return this.prisma.scheduledAutomation.update({ where: { id }, data: { status, skipReason } });
+  }
+
+  /** What is waiting, for the panel — a queue nobody can see is a queue nobody trusts. */
+  async pending(limit = 50) {
+    const rows = await this.prisma.scheduledAutomation.findMany({
+      orderBy: [{ status: 'asc' }, { dueAt: 'asc' }],
+      take: limit,
+      include: {
+        rule: { select: { label: true, event: true } },
+        offer: { select: { program: true, organization: { select: { name: true } } } }
+      }
+    });
+    return {
+      scheduled: rows.map(row => ({
+        id: row.id,
+        rule: row.rule.label,
+        event: row.rule.event,
+        offer: row.offer.program,
+        organization: row.offer.organization.name,
+        dueAt: row.dueAt,
+        status: row.status,
+        skipReason: row.skipReason,
+        attempts: row.attempts
+      }))
+    };
   }
 
   private async write(rule: AutomationRule, context: AutomationContext): Promise<boolean> {
@@ -186,6 +332,8 @@ export class AutomationService {
         attribution: input.attribution || 'system',
         body: input.body as string,
         condition: (input.condition ?? undefined) as Prisma.InputJsonValue | undefined,
+        guard: (input.guard ?? undefined) as Prisma.InputJsonValue | undefined,
+        delayMinutes: input.delayMinutes ?? 0,
         markUnread: input.markUnread ?? true,
         enabled: input.enabled ?? true,
         order: input.order ?? 1,
@@ -208,6 +356,8 @@ export class AutomationService {
         attribution: input.attribution ?? existing.attribution,
         body: input.body ?? existing.body,
         condition: (input.condition ?? existing.condition ?? undefined) as Prisma.InputJsonValue | undefined,
+        guard: (input.guard ?? existing.guard ?? undefined) as Prisma.InputJsonValue | undefined,
+        delayMinutes: input.delayMinutes ?? existing.delayMinutes,
         markUnread: input.markUnread ?? existing.markUnread,
         enabled: input.enabled ?? existing.enabled,
         order: input.order ?? existing.order
@@ -230,6 +380,31 @@ export class AutomationService {
   }
 
   /** Renders a rule against a made-up offer, so an admin sees the wording. */
+  /**
+   * What a condition may read, with the comparisons each field allows and the
+   * words for them. The panel renders its editor from this, so the server stays
+   * the single definition of what is conditionable.
+   */
+  conditionFields() {
+    return {
+      fields: FIELD_CATALOGUE,
+      operatorsByType: OPERATORS_BY_TYPE,
+      operatorLabels: OPERATOR_LABELS
+    };
+  }
+
+  /**
+   * Reads a condition back in English and says whether it means anything.
+   *
+   * Refusing a malformed rule here is the difference between an admin seeing
+   * their mistake and a rule silently never firing.
+   */
+  explainCondition(condition: unknown) {
+    const problem = validateCondition(condition);
+    if (problem) return { valid: false, problem, reads: '' };
+    return { valid: true, problem: '', reads: describeCondition(normalizeCondition(condition)) };
+  }
+
   preview(body: string) {
     const sample = {
       id: 'preview',
@@ -270,6 +445,36 @@ export class AutomationService {
     }
     if (!['system', 'organization'].includes(input.attribution || 'system')) {
       throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Attribution must be system or organization' });
+    }
+
+    /**
+     * A condition that means nothing is refused where the admin can see it,
+     * rather than evaluating to false forever in a rule that looks enabled.
+     */
+    for (const [field, value] of [['condition', input.condition], ['guard', input.guard]] as const) {
+      const problem = validateCondition(value);
+      if (problem) {
+        throw new BadRequestException({
+          code: 'VALIDATION_ERROR',
+          message: field === 'guard' ? `Reason to still send: ${problem}` : problem
+        });
+      }
+    }
+
+    const delay = input.delayMinutes ?? 0;
+    if (!Number.isInteger(delay) || delay < 0) {
+      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'The wait must be a whole number of minutes' });
+    }
+    /** A year is past the point where a queued nudge is still about anything. */
+    if (delay > 525_600) {
+      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'The wait cannot be longer than a year' });
+    }
+    /** A guard is what makes waiting safe, so it only means something with a wait. */
+    if (input.guard && !delay) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'A reason to still send only applies to a rule that waits'
+      });
     }
   }
 }

@@ -148,6 +148,36 @@ model OtpCode {
 /// on the admin panel's "Audit log" tab.
 /// One immutable version of the admin-authored student form. A draft is edited
 /// freely; publishing freezes it and makes it the version students see.
+/// A rule that asked to wait. One row per rule per trigger, so a delayed
+/// message cannot be queued twice however often the event is re-emitted.
+model ScheduledAutomation {
+  id         String         @id @default(uuid())
+  ruleId     String
+  rule       AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  offerId    String
+  offer      Offer          @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  /// What the rule reacted to, carried through so the eventual write stays idempotent.
+  triggerRef String
+  /// The side whose action started the wait; still not badged when it lands.
+  actor      String
+  /// Placeholders captured at trigger time, e.g. an uploaded document's name.
+  extra      Json?
+  dueAt      DateTime
+  /// PENDING, SENT, SKIPPED or FAILED. A skip is an outcome, not a loss.
+  status     String         @default("PENDING")
+  /// Why it did not send, in the words the panel shows.
+  skipReason String?
+  attempts   Int            @default(0)
+  /// Held by whichever worker claimed the row, so two instances cannot both send.
+  claimedAt  DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@unique([ruleId, offerId, triggerRef])
+  @@index([status, dueAt])
+  @@map("scheduled_automations")
+}
+
 model FormSchema {
   id          String    @id @default(uuid())
   /// Which form this is: STUDENT_PROFILE, ORG_OFFER, ORG_PRODUCT, ORG_PRODUCT_INVITE.
@@ -190,6 +220,12 @@ model AutomationRule {
   condition   Json?
   /// Whether it badges the recipient. The actor is never badged for their own action.
   markUnread  Boolean  @default(true)
+  /// Minutes to wait after the event. 0 posts immediately, in the same request.
+  delayMinutes Int     @default(0)
+  /// Re-read when a delayed rule comes due: the reason to still send it. A
+  /// nudge written three days ago must not go out if the student has replied.
+  guard        Json?
+  scheduled    ScheduledAutomation[]
   enabled     Boolean  @default(true)
   order       Int      @default(1)
   /// Seeded rules, which an admin may edit or disable but not delete.
@@ -418,6 +454,7 @@ model Offer {
   expiresAt       DateTime
   withdrawnAt     DateTime?
   messages        OfferMessage[]
+  scheduledAutomations ScheduledAutomation[]
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 

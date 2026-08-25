@@ -38,4 +38,38 @@ export class AutomationController {
   preview(@Body() body: { body: string }) {
     return this.automation.preview(body?.body || '');
   }
+
+  /**
+   * What a condition may read, and which comparisons each field allows.
+   *
+   * The panel builds its editor from this rather than from a copy of the list,
+   * so a field added on the server appears in the admin without a release.
+   */
+  @Get('fields')
+  fields() {
+    return this.automation.conditionFields();
+  }
+
+  /** Says what a condition means in English, and refuses one that means nothing. */
+  @Post('explain')
+  @HttpCode(HttpStatus.OK)
+  explain(@Body() body: { condition?: unknown }) {
+    return this.automation.explainCondition(body?.condition);
+  }
+
+  /** What is waiting to be sent, and what was skipped and why. */
+  @Get('scheduled')
+  scheduled() {
+    return this.automation.pending();
+  }
+
+  /**
+   * Sends whatever is due now instead of waiting for the next tick. The queue
+   * is checked once a minute, which is too slow to demonstrate a rule.
+   */
+  @Post('scheduled/run')
+  @HttpCode(HttpStatus.OK)
+  runScheduled() {
+    return this.automation.dispatchDue();
+  }
 }

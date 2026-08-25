@@ -22,10 +22,17 @@ const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000;
 const PHONE_PATTERN = /^\+?[1-9]\d{7,14}$/;
 
+/**
+ * The two sides of the market.
+ *
+ * Consultancies were a third role with no economics of its own: the platform
+ * exists so a university and a lender can reach a student directly, which is
+ * the work an agent used to be paid for. CONSULTANCY stays in the enum so any
+ * row created before this still reads back, but nothing new can be created.
+ */
 const ORGANIZATION_TYPE_BY_ROLE: Record<string, OrganizationType> = {
   UNIVERSITY_OFFICER: OrganizationType.UNIVERSITY,
-  LOAN_OFFICER: OrganizationType.BANK,
-  CONSULTANT: OrganizationType.CONSULTANCY
+  LOAN_OFFICER: OrganizationType.BANK
 };
 
 const normalizePhone = (phone: string): string => String(phone || '').trim().replace(/[\s()-]/g, '');
