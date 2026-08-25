@@ -79,15 +79,20 @@ export class FormsService {
         if (!source) return field;
 
         const patched = { ...field };
-        if (field.composite && field.itemFields === undefined && source.itemFields) {
+        /**
+         * `== null` rather than `=== undefined`: a schema published before one
+         * of these existed comes back from the JSON column with the key present
+         * and null, so a strict undefined check never backfills it.
+         */
+        if (field.composite && field.itemFields == null && source.itemFields) {
           patched.itemFields = source.itemFields;
           filled++;
         }
-        if (field.group === undefined && source.group) {
+        if (field.group == null && source.group) {
           patched.group = source.group;
           filled++;
         }
-        if (field.optionHints === undefined && source.optionHints) {
+        if (field.optionHints == null && source.optionHints) {
           patched.optionHints = source.optionHints;
           filled++;
         }

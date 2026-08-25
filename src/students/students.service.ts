@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MBBS_ONLY_COUNTRIES } from '../reference/data/master-sheet.data';
@@ -84,11 +84,57 @@ export class StudentsService {
     });
   }
 
-  savePersonalInformation(userId: string, dto: PersonalInformationDto) {
+  /**
+   * One number, one account.
+   *
+   * The number is stored as typed — spacing and punctuation are the student's —
+   * so comparison runs on a derived key of dial country plus digits only. That
+   * key is what the uniqueness index is built on; it is never read from the
+   * client.
+   */
+  private mobileKeyOf(country?: string, number?: string) {
+    const digits = (number || '').replace(/\D/g, '');
+    return digits ? `${(country || '').trim().toUpperCase()}:${digits}` : '';
+  }
+
+  async savePersonalInformation(userId: string, dto: PersonalInformationDto) {
+    const mobileKey = this.mobileKeyOf(dto.mobileCountry, dto.mobileNumber);
+    const altMobileKey = this.mobileKeyOf(dto.altMobileCountry, dto.altMobileNumber);
+
+    /** An alternative number that is the same number is not an alternative. */
+    if (mobileKey && altMobileKey && mobileKey === altMobileKey) {
+      throw new BadRequestException({
+        code: 'ALT_MOBILE_SAME_AS_MOBILE',
+        message: 'Your additional mobile number must be different from your mobile number'
+      });
+    }
+
+    if (mobileKey) {
+      const taken = await this.prisma.studentProfile.findFirst({
+        where: {
+          userId: { not: userId },
+          personal: { path: ['mobileKey'], equals: mobileKey }
+        },
+        select: { userId: true }
+      });
+      if (taken) {
+        throw new ConflictException({
+          code: 'MOBILE_IN_USE',
+          message: 'That mobile number is already registered to another account'
+        });
+      }
+    }
+
     /** Derived, never trusted from the client. */
     const phone = `${dto.mobileCountry ? '' : ''}${dto.phone || ''}`.trim() || dto.phone || '';
     const location = [dto.city, dto.country].filter(Boolean).join(', ');
-    return this.writeSection(userId, 'personal', { ...dto, phone, location });
+    return this.writeSection(userId, 'personal', {
+      ...dto,
+      phone,
+      location,
+      mobileKey,
+      altMobileKey
+    });
   }
 
   /**

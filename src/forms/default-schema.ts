@@ -188,6 +188,14 @@ const ENGLISH: FormSectionDef = {
       visibleWhen: { field: 'attended', equals: ['Yes'] },
       composite: 'englishExams',
       helpText: 'Which score fields are required depends on the status of each test.',
+      /** Each exam is scored on its own scale, so each carries its own example. */
+      optionHints: {
+        IELTS: 'Band 0-9, e.g. 7.5',
+        'TOEFL (New)': 'Score 0-120, e.g. 100',
+        'TOEFL (Old)': 'Score 310-677, e.g. 550',
+        PTE: 'Score 10-90, e.g. 65',
+        DET: 'Score 10-160, e.g. 120'
+      },
       /** One row per test; `status` decides which scores that row asks for. */
       itemFields: [
         item('status', 'Status', 'select', 1, { required: true, optionsSource: 'reference:examStatusOptions' }),
@@ -235,6 +243,12 @@ const COMPETITIVE: FormSectionDef = {
       visibleWhen: { field: 'attended', equals: ['Yes'] },
       composite: 'competitiveExams',
       helpText: 'Which score fields are required depends on the status of each test.',
+      /** Each exam is scored on its own scale, so each carries its own example. */
+      optionHints: {
+        GRE: 'Score 260-340, e.g. 320',
+        'GMAT (Focus)': 'Score 205-805, e.g. 645',
+        'GMAT (Classic)': 'Score 200-800, e.g. 650'
+      },
       /** One row per test; `status` decides which scores that row asks for. */
       itemFields: [
         item('status', 'Status', 'select', 1, { required: true, optionsSource: 'reference:examStatusOptions' }),
