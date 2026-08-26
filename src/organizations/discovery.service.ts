@@ -312,7 +312,8 @@ export class DiscoveryService {
     const profiles = await this.prisma.studentProfile.findMany({
       /** A student is visible only once submitted, and only while their own
        *  discovery toggle is on. */
-      where: { status: 'SUBMITTED', discoverable: true },
+      /* Alumni are already admitted, so they are nobody's candidate. */
+      where: { status: 'SUBMITTED', discoverable: true, segment: { not: 'ALUMNI' } },
       include: { user: true },
       orderBy: { submittedAt: 'desc' }
     });
@@ -513,7 +514,7 @@ export class DiscoveryService {
       where: { userId: studentUserId },
       include: { user: true }
     });
-    if (!profile || profile.status !== 'SUBMITTED' || !profile.discoverable) {
+    if (!profile || profile.status !== 'SUBMITTED' || !profile.discoverable || profile.segment === 'ALUMNI') {
       throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: 'No discoverable student found for that id' });
     }
     const offers = await this.prisma.offer.findMany({

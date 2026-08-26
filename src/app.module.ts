@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { AdmissionsModule } from './admissions/admissions.module';
 import { AutomationModule } from './automation/automation.module';
 import { CreditModule } from './credit/credit.module';
 import { FormsModule } from './forms/forms.module';
@@ -19,6 +20,7 @@ import { HealthController } from './health.controller';
     PrismaModule,
     CreditModule,
     FormsModule,
+    AdmissionsModule,
     AutomationModule,
     AuthModule,
     AdminModule,

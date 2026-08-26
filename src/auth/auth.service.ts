@@ -137,7 +137,8 @@ export class AuthService {
       user_id: user.id,
       role: user.role,
       approval_status: user.organization?.verificationStatus,
-      can_login: user.organization?.verificationStatus === 'APPROVED'
+      /** Signing in is allowed while pending; what it reaches is not. */
+      can_login: user.organization?.verificationStatus !== 'REJECTED'
     };
   }
 
@@ -191,12 +192,14 @@ export class AuthService {
     }
 
     if (user.organization) {
-      if (user.organization.verificationStatus === 'PENDING') {
-        throw new HttpException(
-          { code: 'ACCOUNT_PENDING_APPROVAL', message: 'Your organization is still being reviewed by the SuperOffer admin team', user_id: user.id, approval_status: 'PENDING' },
-          403
-        );
-      }
+      /*
+       * A pending organisation signs in and works on its verification. It sees
+       * its own workspace and not one student: every route that reads student
+       * data sits behind ApprovedOrganizationGuard, so access is refused where
+       * the data is rather than at the door. Locking them out instead left a
+       * registrar with a password, no way to supply what was asked for, and
+       * nothing to do but email support.
+       */
       if (user.organization.verificationStatus === 'REJECTED') {
         throw new HttpException(
           { code: 'ACCOUNT_REJECTED', message: user.organization.rejectionReason || 'Your organization registration was not approved', user_id: user.id, approval_status: 'REJECTED' },
@@ -290,7 +293,7 @@ export class AuthService {
       user_id: user.id,
       role: user.role,
       approval_status: approvalStatus,
-      can_login: approvalStatus === 'APPROVED',
+      can_login: approvalStatus !== 'REJECTED',
       organization_name: user.organization?.name || null,
       rejection_reason: user.organization?.rejectionReason || null,
       submitted_at: user.createdAt,

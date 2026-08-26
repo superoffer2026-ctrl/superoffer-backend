@@ -78,7 +78,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'personalInformation',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'personalInformation')
     );
     return this.students.savePersonalInformation(user.id, payload as unknown as PersonalInformationDto);
   }
@@ -92,7 +94,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'studyPreferences',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'studyPreferences')
     );
     return this.students.saveStudyPreferences(user.id, payload as unknown as StudyPreferencesDto);
   }
@@ -106,7 +110,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'academicInformation',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'academicInformation')
     );
     return this.students.saveAcademicInformation(user.id, payload as unknown as AcademicInformationDto);
   }
@@ -120,7 +126,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'englishExam',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'englishExam')
     );
     return this.students.saveEnglishExam(user.id, payload as unknown as EnglishExamDto);
   }
@@ -134,7 +142,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'competitiveExam',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'competitiveExam')
     );
     return this.students.saveCompetitiveExam(user.id, payload as unknown as CompetitiveExamDto);
   }
@@ -148,7 +158,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'workExperience',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'workExperience')
     );
     return this.students.saveWorkExperience(user.id, payload as unknown as WorkExperienceDto);
   }
@@ -162,7 +174,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'financialInformation',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'financialInformation')
     );
     return this.students.saveFinancialInformation(user.id, payload as unknown as FinancialInformationDto);
   }
@@ -176,7 +190,9 @@ export class StudentsController {
     const payload = await this.schema.mergeAndValidate(
       'projectsAchievements',
       dto as unknown as Record<string, unknown>,
-      request.body
+      request.body,
+      'DEFAULT',
+      await this.students.storedSection(user.id, 'projectsAchievements')
     );
     return this.students.saveProjectsAchievements(user.id, payload as unknown as ProjectsAchievementsDto);
   }

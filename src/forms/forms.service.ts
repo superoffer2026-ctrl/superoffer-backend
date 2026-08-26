@@ -113,7 +113,12 @@ export class FormsService {
   }
 
   /** The coded form a fresh database serves before anything has been published. */
-  private builtIn(formKey: FormKey, variant: string): FormSchemaDef | null {
+  /**
+   * The schema as it ships. Public because option-set usage is counted from the
+   * form that is actually being served, and a form nobody has published yet is
+   * still being served — from here.
+   */
+  builtIn(formKey: FormKey, variant: string): FormSchemaDef | null {
     if (formKey === 'STUDENT_PROFILE') return variant === 'DEFAULT' ? cloneDefaultSchema() : null;
     return cloneOrgSchema(formKey, variant);
   }

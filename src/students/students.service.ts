@@ -32,6 +32,18 @@ const EARNER_INCOME_FIELDS: Record<string, 'fatherIncome' | 'motherIncome' | 'gu
 /** Scores the wizard requires for a given exam status (docs/09-Business-Rules.md). */
 const parseAmount = (value?: string): number => Number((value || '').replace(/[^0-9.]/g, '')) || 0;
 
+/** Which profile column each wizard section is stored in. */
+const SECTION_COLUMN: Record<string, string> = {
+  personalInformation: 'personal',
+  studyPreferences: 'studyPreferences',
+  academicInformation: 'academic',
+  englishExam: 'entranceExams',
+  competitiveExam: 'entranceExams',
+  workExperience: 'workExperience',
+  financialInformation: 'financial',
+  projectsAchievements: 'projects'
+};
+
 @Injectable()
 export class StudentsService {
   constructor(private prisma: PrismaService) {}
@@ -95,6 +107,20 @@ export class StudentsService {
   private mobileKeyOf(country?: string, number?: string) {
     const digits = (number || '').replace(/\D/g, '');
     return digits ? `${(country || '').trim().toUpperCase()}:${digits}` : '';
+  }
+
+  /**
+   * The section as it stands, so validation can widen an option list with what
+   * this student already chose. An option removed after they picked it must not
+   * make the rest of their profile unsaveable.
+   */
+  async storedSection(userId: string, sectionKey: string): Promise<Record<string, unknown>> {
+    const column = SECTION_COLUMN[sectionKey];
+    if (!column) return {};
+    const profile = await this.prisma.studentProfile.findUnique({ where: { userId } });
+    if (!profile) return {};
+    const value = (profile as unknown as Record<string, unknown>)[column];
+    return (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
   }
 
   async savePersonalInformation(userId: string, dto: PersonalInformationDto) {

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { OptionSetsService } from '../forms/option-sets.service';
 import { COUNTRIES, INDIA_CITIES } from './data/geo.data';
 import {
   BANK_EVALUATION_MODE_OPTIONS,
@@ -32,54 +33,68 @@ import {
 } from './data/wizard.data';
 
 /**
- * Serves every dropdown in the student wizard. The same constants back the DTO
- * validators in `students/dto`, so a student can never be offered an option the
- * server then rejects.
+ * Serves every dropdown in the student wizard.
+ *
+ * The lists come from the option-set store, falling back to the constant they
+ * were seeded from. That fallback matters: this endpoint answers before the
+ * store has loaded on a cold boot, and a dropdown with nothing in it is worse
+ * than a slightly stale one.
+ *
+ * Reading the same store the validator reads is the whole point — a student
+ * must never be offered a choice the server will then refuse.
  */
 @Injectable()
 export class ReferenceService {
+  constructor(private optionSets: OptionSetsService) {}
+
+  /** The stored list if there is one, otherwise what shipped. */
+  private list(key: string, fallback: readonly string[]): readonly string[] {
+    const stored = this.optionSets.valuesFor(key);
+    return stored.length ? stored : fallback;
+  }
+
   geo() {
-    return { countries: COUNTRIES, indiaCities: INDIA_CITIES };
+    return { countries: COUNTRIES, indiaCities: this.list('indiaCities', INDIA_CITIES) };
   }
 
   studyPreferences() {
     return {
-      studyCountries: STUDY_COUNTRIES,
+      studyCountries: this.list('studyCountries', STUDY_COUNTRIES),
       mbbsOnlyCountries: MBBS_ONLY_COUNTRIES,
-      fieldsOfStudy: FIELDS_OF_STUDY,
-      intakeOptions: INTAKE_OPTIONS,
-      startYears: START_YEARS
+      fieldsOfStudy: this.list('fieldsOfStudy', FIELDS_OF_STUDY),
+      intakeOptions: this.list('intakeOptions', INTAKE_OPTIONS),
+      startYears: this.list('startYears', START_YEARS)
     };
   }
 
   academicInformation() {
     return {
-      qualificationOptions: QUALIFICATION_OPTIONS,
-      curriculumOptions: CURRICULUM_OPTIONS,
-      educationGapOptions: EDUCATION_GAP_OPTIONS,
-      educationYears: EDUCATION_YEARS,
-      universityOptions: UNIVERSITY_OPTIONS
+      qualificationOptions: this.list('qualificationOptions', QUALIFICATION_OPTIONS),
+      curriculumOptions: this.list('curriculumOptions', CURRICULUM_OPTIONS),
+      educationGapOptions: this.list('educationGapOptions', EDUCATION_GAP_OPTIONS),
+      educationYears: this.list('educationYears', EDUCATION_YEARS),
+      universityOptions: this.list('universityOptions', UNIVERSITY_OPTIONS)
     };
   }
 
   englishExam() {
-    return { englishExamOptions: ENGLISH_EXAM_OPTIONS, examStatusOptions: EXAM_STATUS_OPTIONS };
+    return { englishExamOptions: this.list('englishExamOptions', ENGLISH_EXAM_OPTIONS), examStatusOptions: this.list('examStatusOptions', EXAM_STATUS_OPTIONS) };
   }
 
   competitiveExam() {
-    return { competitiveExamOptions: COMPETITIVE_EXAM_OPTIONS, examStatusOptions: EXAM_STATUS_OPTIONS };
+    return { competitiveExamOptions: this.list('competitiveExamOptions', COMPETITIVE_EXAM_OPTIONS), examStatusOptions: this.list('examStatusOptions', EXAM_STATUS_OPTIONS) };
   }
 
   workExperience() {
-    return { employmentTypes: EMPLOYMENT_TYPES };
+    return { employmentTypes: this.list('employmentTypes', EMPLOYMENT_TYPES) };
   }
 
   financialInformation() {
     return {
-      fundingSourceOptions: FUNDING_SOURCE_OPTIONS,
-      employmentCategoryOptions: EMPLOYMENT_CATEGORY_OPTIONS,
-      earningMemberOptions: EARNING_MEMBER_OPTIONS,
-      currencyOptions: CURRENCY_OPTIONS,
+      fundingSourceOptions: this.list('fundingSourceOptions', FUNDING_SOURCE_OPTIONS),
+      employmentCategoryOptions: this.list('employmentCategoryOptions', EMPLOYMENT_CATEGORY_OPTIONS),
+      earningMemberOptions: this.list('earningMemberOptions', EARNING_MEMBER_OPTIONS),
+      currencyOptions: this.list('currencyOptions', CURRENCY_OPTIONS),
       financialDocumentFields: FINANCIAL_DOCUMENT_FIELDS
     };
   }

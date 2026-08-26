@@ -179,3 +179,200 @@ export const DEFAULT_RULES: Array<{
     order: 1
   }
 ];
+
+// ── Channels and actions ────────────────────────────────────────────────────
+
+/**
+ * Where a message can go.
+ *
+ * `inapp` is the offer thread — the native chat both sides already read, and
+ * the only channel that cannot bounce. The other two leave the building, which
+ * is why every one of them records a delivery row.
+ */
+export const CHANNELS = ['inapp', 'email', 'whatsapp', 'sms'] as const;
+export type ChannelKey = (typeof CHANNELS)[number];
+
+export const CHANNEL_LABELS: Record<ChannelKey, string> = {
+  inapp: 'Native chat',
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+  sms: 'SMS'
+};
+
+export const CHANNEL_DESCRIPTIONS: Record<ChannelKey, string> = {
+  inapp: 'Posted in the offer thread, where both sides already talk',
+  email: 'Sent to the address on the account',
+  whatsapp: 'Sent to the mobile on the account, as a registered template',
+  sms: 'Sent to the mobile on the account. Indian numbers need a DLT-registered template'
+};
+
+/**
+ * A WhatsApp message outside the 24-hour service window has to be one of Meta's
+ * pre-approved templates, so a rule cannot simply reuse its typed body. The
+ * name is what was registered; the params are placeholder strings, rendered the
+ * same way the body is, and passed in order.
+ */
+export interface ChannelTemplate {
+  name: string;
+  params: string[];
+}
+
+/**
+ * What one channel says, when it should not say what the others say.
+ *
+ * A line that reads well in the offer thread reads like a fragment as an
+ * email, and WhatsApp cannot carry free text at all outside its service
+ * window. Anything left blank here falls back to the action's own body, so a
+ * rule that is happy saying one thing everywhere still only says it once.
+ */
+export interface ChannelContent {
+  body?: string;
+  /** Email only. */
+  subject?: string;
+  /** WhatsApp only, and required there. */
+  template?: ChannelTemplate;
+}
+
+/**
+ * One thing a rule does.
+ *
+ * A discriminated union rather than a bag of optional fields, so adding a
+ * webhook or a bot handoff later is a new member and not a new set of columns
+ * every existing action has to ignore.
+ */
+export type AutomationAction = NotifyAction;
+
+export interface NotifyAction {
+  type: 'notify';
+  /** Empty means the native chat, which is what every rule did before this. */
+  channels: ChannelKey[];
+  audience: Audience;
+  attribution: Attribution;
+  body: string;
+  /** Email only; falls back to the rule's label when blank. */
+  subject?: string;
+  /** Required for WhatsApp outside an open service window. */
+  templates?: Partial<Record<ChannelKey, ChannelTemplate>>;
+  /** Per-channel wording. Anything absent falls back to `body`/`subject`. */
+  content?: Partial<Record<ChannelKey, ChannelContent>>;
+  /**
+   * Minutes to wait before this action runs.
+   *
+   * Held on the action rather than the rule so one trigger can post to the
+   * thread at once and send a reminder three days later, which is the whole
+   * point of separating instant work from scheduled work.
+   */
+  delayMinutes?: number;
+  markUnread?: boolean;
+}
+
+/** What a channel should say for this action, after the fallbacks. */
+export function contentFor(action: NotifyAction, channel: ChannelKey): ChannelContent {
+  const own = action.content?.[channel] ?? {};
+  return {
+    body: own.body?.trim() ? own.body : action.body,
+    subject: own.subject?.trim() ? own.subject : action.subject,
+    /** The older shape stored templates on their own; still read it. */
+    template: own.template ?? action.templates?.[channel]
+  };
+}
+
+/** The wait this action asks for, falling back to the rule's own. */
+export function delayOf(action: NotifyAction, ruleDelayMinutes: number): number {
+  const own = action.delayMinutes;
+  return typeof own === 'number' && own >= 0 ? own : ruleDelayMinutes;
+}
+
+export const ACTION_TYPES = ['notify'] as const;
+export type ActionType = (typeof ACTION_TYPES)[number];
+
+export const ACTION_LABELS: Record<ActionType, string> = {
+  notify: 'Send a message'
+};
+
+/** A rule written before actions existed, read as the one action it always was. */
+export function actionsOf(rule: {
+  actions?: unknown;
+  audience: string;
+  attribution: string;
+  body: string;
+  markUnread?: boolean;
+}): AutomationAction[] {
+  const stored = Array.isArray(rule.actions) ? (rule.actions as AutomationAction[]) : [];
+  if (stored.length) return stored;
+  return [
+    {
+      type: 'notify',
+      channels: ['inapp'],
+      audience: (rule.audience || 'both') as Audience,
+      attribution: (rule.attribution || 'system') as Attribution,
+      body: rule.body || '',
+      markUnread: rule.markUnread !== false
+    }
+  ];
+}
+
+/**
+ * Whether an action is well formed, in words.
+ *
+ * Returns the complaints rather than throwing: the admin panel shows all of
+ * them at once, and a rule with one bad action should say which.
+ */
+export function validateAction(action: unknown, index: number): string[] {
+  const at = `Action ${index + 1}`;
+  if (!action || typeof action !== 'object') return [`${at} is not an action.`];
+  const a = action as Partial<NotifyAction>;
+
+  if (a.type !== 'notify') return [`${at} has an unknown type "${String(a.type)}".`];
+
+  const problems: string[] = [];
+  if (!a.body || !a.body.trim()) problems.push(`${at} has no message.`);
+
+  const channels = Array.isArray(a.channels) ? a.channels : [];
+  if (!channels.length) problems.push(`${at} has no channel selected.`);
+  for (const channel of channels) {
+    if (!(CHANNELS as readonly string[]).includes(channel)) {
+      problems.push(`${at} names a channel we cannot send on: "${channel}".`);
+    }
+  }
+
+  if (a.audience && !['student', 'organization', 'both'].includes(a.audience)) {
+    problems.push(`${at} has an audience we do not recognise.`);
+  }
+  if (a.attribution && !['system', 'organization'].includes(a.attribution)) {
+    problems.push(`${at} has an attribution we do not recognise.`);
+  }
+
+  /*
+   * A WhatsApp action with no template will be refused by Meta the moment the
+   * service window is closed, which is most of the time. Saying so here beats
+   * finding out from a delivery row three days later.
+   */
+  if (channels.includes('whatsapp')) {
+    const template = a.content?.whatsapp?.template ?? a.templates?.whatsapp;
+    if (!template || !template.name) {
+      problems.push(`${at} sends on WhatsApp but names no approved template.`);
+    }
+  }
+
+  /*
+   * Indian SMS is not free text either.
+   *
+   * A message to an Indian number has to match a template registered on the
+   * DLT platform, under a registered sender ID. An unregistered send is
+   * rejected by the operator, not delivered late — so this is checked when the
+   * rule is written rather than discovered in a delivery row.
+   */
+  if (channels.includes('sms')) {
+    const template = a.content?.sms?.template;
+    if (!template || !template.name) {
+      problems.push(`${at} sends on SMS but names no DLT-registered template.`);
+    }
+  }
+
+  if (typeof a.delayMinutes === 'number' && a.delayMinutes < 0) {
+    problems.push(`${at} cannot wait for a negative time.`);
+  }
+
+  return problems;
+}

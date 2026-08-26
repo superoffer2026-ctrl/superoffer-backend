@@ -459,6 +459,24 @@ export class OffersService {
         message: 'This student has not submitted their profile yet'
       });
     }
+    /*
+     * Hiding someone from the list is not enough on its own: an officer who
+     * already holds a student id could still send to them. An alumnus has
+     * taken a place somewhere, so an offer would be an intrusion rather than
+     * an opportunity.
+     */
+    if (student.studentProfile.segment === 'ALUMNI') {
+      throw new BadRequestException({
+        code: 'STUDENT_IS_ALUMNI',
+        message: 'This student has already taken up a place, so they are no longer receiving offers.'
+      });
+    }
+    if (!student.studentProfile.discoverable) {
+      throw new BadRequestException({
+        code: 'STUDENT_NOT_DISCOVERABLE',
+        message: 'This student is not currently discoverable.'
+      });
+    }
 
     const windowDays = dto.responseWindowDays || DEFAULT_RESPONSE_WINDOW_DAYS;
     const offer = await this.prisma.offer.create({

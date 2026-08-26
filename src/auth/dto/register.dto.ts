@@ -9,40 +9,40 @@ const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
 const WEBSITE_PATTERN = /^(https?:\/\/)?([\w-]+\.)+[a-z]{2,}(\/\S*)?$/i;
 
 /**
- * What an approval rests on.
+ * Creating an account, not proving who you are.
  *
- * An approved organisation can read submitted student profiles — names, marks,
- * budgets, and for lenders the co-applicant's financial details. So approval is
- * the gate on real people's data, and the reviewer is told to confirm these
- * references against the issuing authority. Optional fields made that
- * instruction unfollowable: the queue arrived carrying "Not provided".
+ * The evidence an approval rests on is asked for after signing in, on the
+ * verification page, where a registrar can gather certificates at their own
+ * pace and see exactly what is still outstanding. Demanding it at the signup
+ * form turned one missing licence number into a wall of red and an abandoned
+ * registration — and nothing is at risk in the meantime, because an
+ * unapproved organisation cannot see a single student.
  */
 export class OrganizationRegistrationDto {
   @IsString()
   @IsNotEmpty({ message: 'Enter the organisation legal name' })
   name!: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Enter the registration number the authority issued' })
-  registrationNumber!: string;
+  registrationNumber?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Enter the accreditation or licence reference' })
-  licenseReference!: string;
+  licenseReference?: string;
 
-  /** The official site is how a reviewer checks the email domain is really theirs. */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Enter the official website' })
   @Matches(WEBSITE_PATTERN, { message: 'Enter a valid website, for example www.example.edu' })
-  website!: string;
+  website?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Enter the country' })
-  country!: string;
+  country?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Enter the city' })
-  city!: string;
+  city?: string;
 }
 
 export class RegisterDto {
@@ -54,15 +54,12 @@ export class RegisterDto {
   @Matches(PASSWORD_PATTERN, { message: 'Password must contain at least one letter and one number' })
   password!: string;
 
-  /** A student may be nameless for a moment; an organisation has a named contact. */
-  @ValidateIf(o => o.role !== 'STUDENT')
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Enter the name of the person we should contact' })
   fullName?: string;
 
-  @ValidateIf(o => o.role !== 'STUDENT')
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Enter a contact phone number' })
   phone?: string;
 
   @IsString()

@@ -45,6 +45,18 @@ import {
 
 // ── Step 1 · Personal information ────────────────────────────────────────────
 
+/**
+ * Membership in an option list is not decided here.
+ *
+ * These lists are editable by an admin at runtime, and a decorator captures its
+ * array when the class is defined — so an option added this morning would render
+ * in the dropdown and be rejected on save, with nothing in the message to
+ * explain why. The published form is the single gate: SchemaValidatorService
+ * reads the current list, and widens it with whatever this student already
+ * holds so removing an option never invalidates a profile that predates it.
+ *
+ * The shape is still enforced here. Only the membership moved.
+ */
 export class PersonalInformationDto {
   @IsOptional() @IsString()
   fullName?: string;
@@ -66,7 +78,7 @@ export class PersonalInformationDto {
 
   /** Matched by exact name against the /reference/geo list. */
   @IsOptional()
-  @IsIn(COUNTRY_NAMES, { message: 'country must be one of the countries served by /reference/geo' })
+  @IsString()
   country?: string;
 
   @IsOptional() @IsString()
@@ -91,7 +103,7 @@ export class PersonalInformationDto {
  */
 export class StudyPreferencesDto {
   @IsOptional() @IsArray()
-  @IsIn(STUDY_COUNTRIES, { each: true })
+  @IsString({ each: true })
   countries?: string[];
 
   /** "What do you want to study?" — a subject list, not the StudyLevel enum. */
@@ -105,21 +117,21 @@ export class StudyPreferencesDto {
   fieldOfInterest?: string[];
 
   @IsOptional() @IsArray()
-  @IsIn(START_YEARS, { each: true })
+  @IsString({ each: true })
   startYear?: string[];
 
   @IsOptional() @IsArray()
-  @IsIn(INTAKE_OPTIONS, { each: true })
+  @IsString({ each: true })
   intake?: string[];
 }
 
 // ── Step 3 · Academic information ────────────────────────────────────────────
 
 export class AcademicHistoryEntryDto {
-  @IsIn(QUALIFICATION_OPTIONS)
+  @IsString()
   level!: string;
 
-  @IsOptional() @IsIn(CURRICULUM_OPTIONS)
+  @IsOptional() @IsString()
   curriculum?: string;
 
   @IsOptional() @IsString()
@@ -149,7 +161,7 @@ export class AcademicHistoryEntryDto {
 }
 
 export class AcademicInformationDto {
-  @IsIn(QUALIFICATION_OPTIONS)
+  @IsString()
   qualificationLevel!: string;
 
   @IsOptional() @IsString()
@@ -164,7 +176,7 @@ export class AcademicInformationDto {
   @IsOptional() @IsString()
   qualification?: string;
 
-  @IsOptional() @IsIn(EDUCATION_GAP_OPTIONS)
+  @IsOptional() @IsString()
   educationGap?: string;
 
   @IsArray() @ArrayNotEmpty()
@@ -179,7 +191,7 @@ export class ExamEntryDto {
   @IsString() @IsNotEmpty()
   exam!: string;
 
-  @IsIn(EXAM_STATUS_OPTIONS)
+  @IsString()
   status!: string;
 
   @IsOptional() @IsString()
@@ -236,7 +248,7 @@ export class ExperienceEntryDto {
   @IsString() @IsNotEmpty()
   role!: string;
 
-  @IsIn(EMPLOYMENT_TYPES)
+  @IsString()
   type!: string;
 
   @IsString() @IsNotEmpty()
@@ -272,11 +284,11 @@ export class WorkExperienceDto {
 // ── Step 7 · Financial information ───────────────────────────────────────────
 
 export class FinancialInformationDto {
-  @IsIn(FUNDING_SOURCE_OPTIONS)
+  @IsString()
   fundingSource!: string;
 
   @IsArray() @ArrayNotEmpty()
-  @IsIn(EARNING_MEMBER_OPTIONS, { each: true })
+  @IsString({ each: true })
   earningMembers!: string[];
 
   @IsOptional() @IsString()
@@ -292,10 +304,10 @@ export class FinancialInformationDto {
   @IsOptional() @IsString()
   annualHouseholdIncome?: string;
 
-  @IsIn(CURRENCY_OPTIONS)
+  @IsString()
   currency!: string;
 
-  @IsIn(EMPLOYMENT_CATEGORY_OPTIONS)
+  @IsString()
   employmentCategory!: string;
 
   @IsIn(['yes', 'no'])

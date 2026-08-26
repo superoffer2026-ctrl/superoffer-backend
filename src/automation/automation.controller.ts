@@ -32,6 +32,18 @@ export class AutomationController {
     return this.automation.remove(id);
   }
 
+  /** Which channels exist, and whether each is actually configured to send. */
+  @Get('channels')
+  channels() {
+    return this.automation.channelStatus();
+  }
+
+  /** What a rule has actually done lately, per channel. */
+  @Get(':id/deliveries')
+  deliveries(@Param('id') id: string) {
+    return this.automation.deliveriesFor(id);
+  }
+
   /** Renders a body against a sample offer so wording can be checked before saving. */
   @Post('preview')
   @HttpCode(HttpStatus.OK)

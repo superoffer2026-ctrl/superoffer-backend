@@ -1,30 +1,41 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { AdminKeyGuard } from '../admin/admin-key.guard';
 import { FormSchemaDef } from './form-schema.types';
 import { FormsService } from './forms.service';
+import { OptionSetsService } from './option-sets.service';
 
 /**
  * The published schema, readable by anyone: the student portal renders from it
  * and it contains no personal data, matching how the rest of `/reference` works.
  */
 @ApiTags('forms')
+/**
+ * The form as students are served it.
+ *
+ * An admin publishes a change and expects to see it, so the browser revalidates
+ * rather than holding a copy. `no-cache` still stores it — an unchanged schema
+ * costs one 304 instead of the whole document.
+ */
 @Controller('reference/form-schema')
 export class PublicFormsController {
   constructor(private forms: FormsService) {}
 
+  @Header('Cache-Control', 'no-cache')
   @Get()
   published(@Query('variant') variant?: string, @Query('form') form?: string) {
     const formKey = this.forms.assertFormKey(form);
     return this.forms.published(variant || 'DEFAULT', formKey);
   }
 
+  @Header('Cache-Control', 'no-cache')
   @Get('variants')
   variants(@Query('form') form?: string) {
     return this.forms.variants(this.forms.assertFormKey(form));
   }
 
   /** Which forms exist, so a caller knows what it may ask for. */
+  @Header('Cache-Control', 'no-cache')
   @Get('forms')
   forms_() {
     return { forms: this.forms.forms() };
@@ -37,12 +48,38 @@ export class PublicFormsController {
 @UseGuards(AdminKeyGuard)
 @Controller('admin/form-schema')
 export class AdminFormsController {
-  constructor(private forms: FormsService) {}
+  constructor(private forms: FormsService, private optionSets: OptionSetsService) {}
 
   /** Which forms exist, with their variants and what each is for. */
   @Get('forms')
   forms_() {
     return { forms: this.forms.forms() };
+  }
+
+  /**
+   * The named lists fields point at, with which fields use each.
+   *
+   * Editing one changes what every field offers and what the server accepts, so
+   * an admin needs to see the reach of a change before making it.
+   */
+  @Get('option-sets')
+  listOptionSets() {
+    return this.optionSets.list();
+  }
+
+  /** Who would be left holding a value, before it is removed rather than after. */
+  @Post('option-sets/:key/impact')
+  @HttpCode(HttpStatus.OK)
+  optionSetImpact(@Param('key') key: string, @Body() body: { values?: string[] }) {
+    return this.optionSets.impactOf(key, Array.isArray(body?.values) ? body.values : []);
+  }
+
+  @Patch('option-sets/:key')
+  updateOptionSet(
+    @Param('key') key: string,
+    @Body() body: { label?: string; description?: string; values?: string[] }
+  ) {
+    return this.optionSets.update(key, body);
   }
 
   @Get()

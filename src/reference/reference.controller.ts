@@ -3,78 +3,87 @@ import { ApiTags } from '@nestjs/swagger';
 import { ReferenceService } from './reference.service';
 
 /**
- * Public, read-only dropdown data. Fetched on every wizard step load and it
- * changes rarely, so responses are cached for a day.
+ * Public, read-only dropdown data.
+ *
+ * These lists were once compile-time constants, so holding them in the browser
+ * for a day cost nothing — they could not change between deploys. They are
+ * editable at runtime now, and a day-long cache meant an admin's edit reached
+ * the server, the validator and the published form while the student's own
+ * dropdown kept offering yesterday's choices.
+ *
+ * `no-cache` does not mean "do not store": the browser keeps the copy and
+ * revalidates it, so an unchanged list still costs one 304 rather than the
+ * whole payload — and a changed one arrives immediately.
  */
 /** Nest only supports @Header on route handlers, so it is applied per endpoint. */
-const CacheForADay = () => Header('Cache-Control', 'public, max-age=86400');
+const RevalidateEachTime = () => Header('Cache-Control', 'no-cache');
 
 @ApiTags('reference')
 @Controller('reference')
 export class ReferenceController {
   constructor(private reference: ReferenceService) {}
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('geo')
   geo() {
     return this.reference.geo();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('study-preferences')
   studyPreferences() {
     return this.reference.studyPreferences();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('academic-information')
   academicInformation() {
     return this.reference.academicInformation();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('english-exam')
   englishExam() {
     return this.reference.englishExam();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('competitive-exam')
   competitiveExam() {
     return this.reference.competitiveExam();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('work-experience')
   workExperience() {
     return this.reference.workExperience();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('financial-information')
   financialInformation() {
     return this.reference.financialInformation();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('projects-achievements')
   projectsAchievements() {
     return this.reference.projectsAchievements();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('offer-conditions')
   offerConditions() {
     return this.reference.offerConditions();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('documents')
   documents() {
     return this.reference.documents();
   }
 
-  @CacheForADay()
+  @RevalidateEachTime()
   @Get('organization-options')
   organizationOptions() {
     return this.reference.organizationOptions();

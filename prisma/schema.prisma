@@ -73,7 +73,7 @@ model User {
 /// One row per registering institution (university, bank, or consultancy).
 /// Institution officers can't search/invite until verificationStatus = APPROVED.
 model Organization {
-  id                 String                @id @default(uuid())
+  id                 String                        @id @default(uuid())
   name               String
   organizationType   OrganizationType
   registrationNumber String?
@@ -81,31 +81,31 @@ model Organization {
   website            String?
   country            String?
   city               String?
-  verificationStatus ApprovalStatus        @default(PENDING)
-  submittedAt        DateTime              @default(now())
+  verificationStatus ApprovalStatus                @default(PENDING)
+  submittedAt        DateTime                      @default(now())
   reviewedAt         DateTime?
   rejectionReason    String?
   reviewNote         String?
   /// Editable profile copy shown in the workspace's Org Profile tab.
   description        String?
   /// Subscription state. `profilesViewed` is the quota counter for the cycle.
-  plan               String                @default("Professional")
-  profilesViewed     Int                   @default(0)
+  plan               String                        @default("Professional")
+  profilesViewed     Int                           @default(0)
   /// Bank-only: which students an officer may evaluate (docs/09-Business-Rules.md).
   bankEvaluationMode String?
   bureauCredential   OrganizationBureauCredential?
   /// Matching thresholds the discovery score is computed from.
-  criteria           Json                  @default("{}")
+  criteria           Json                          @default("{}")
   /// Per-officer-organization notification frequencies.
-  notificationPrefs  Json                  @default("[]")
+  notificationPrefs  Json                          @default("[]")
   /// Reusable offer term sets the composer loads from.
-  offerTemplates     Json                  @default("[]")
+  offerTemplates     Json                          @default("[]")
   users              User[]
   offers             Offer[]
   products           OrganizationProduct[]
   shortlist          Shortlist[]
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
+  createdAt          DateTime                      @default(now())
+  updatedAt          DateTime                      @updatedAt
 
   @@map("organizations")
 }
@@ -151,31 +151,62 @@ model OtpCode {
 /// A rule that asked to wait. One row per rule per trigger, so a delayed
 /// message cannot be queued twice however often the event is re-emitted.
 model ScheduledAutomation {
-  id         String         @id @default(uuid())
-  ruleId     String
-  rule       AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  offerId    String
-  offer      Offer          @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  id          String         @id @default(uuid())
+  ruleId      String
+  rule        AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  offerId     String
+  offer       Offer          @relation(fields: [offerId], references: [id], onDelete: Cascade)
   /// What the rule reacted to, carried through so the eventual write stays idempotent.
-  triggerRef String
+  triggerRef  String
   /// The side whose action started the wait; still not badged when it lands.
-  actor      String
+  actor       String
   /// Placeholders captured at trigger time, e.g. an uploaded document's name.
-  extra      Json?
-  dueAt      DateTime
+  extra       Json?
+  /// Which action of the rule is waiting.
+  ///
+  /// A rule can now hold several scheduled action sets at different times — a
+  /// nudge after a day and a last call after a week — so a queued row has to
+  /// say which of them it is, or the worker would run the whole rule again.
+  actionIndex Int            @default(0)
+  dueAt       DateTime
   /// PENDING, SENT, SKIPPED or FAILED. A skip is an outcome, not a loss.
-  status     String         @default("PENDING")
+  status      String         @default("PENDING")
   /// Why it did not send, in the words the panel shows.
-  skipReason String?
-  attempts   Int            @default(0)
+  skipReason  String?
+  attempts    Int            @default(0)
   /// Held by whichever worker claimed the row, so two instances cannot both send.
-  claimedAt  DateTime?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
+  claimedAt   DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  @@unique([ruleId, offerId, triggerRef])
+  @@unique([ruleId, offerId, triggerRef, actionIndex])
   @@index([status, dueAt])
   @@map("scheduled_automations")
+}
+
+/// A named list of choices that fields point at.
+///
+/// These began as compile-time constants, which meant three consumers read the
+/// same list from source: DTO validation, the /reference endpoints the
+/// hand-drawn dropdowns use, and the published form schema. Moving them here
+/// gives all three one editable definition — otherwise an option added in the
+/// admin renders in the dropdown and is then rejected on save.
+model OptionSet {
+  id          String   @id @default(uuid())
+  /// Stable identifier a field refers to, e.g. "studyCountries".
+  key         String   @unique
+  /// What an admin sees, e.g. "Study destinations".
+  label       String
+  description String?
+  /// The choices, in the order they are offered.
+  values      String[] @default([])
+  /// Seeded from the master sheet. An admin may edit these but not delete the
+  /// set, because a field somewhere points at it.
+  system      Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@map("option_sets")
 }
 
 model FormSchema {
@@ -206,35 +237,75 @@ model FormSchema {
 
 /// An admin-authored rule: when this happens, post this into the offer thread.
 model AutomationRule {
-  id          String   @id @default(uuid())
+  id           String                @id @default(uuid())
   /// The domain event that fires it, e.g. "offer.accepted".
-  event       String
-  label       String
+  event        String
+  label        String
   /// Who the message is addressed to: student, organization, or both.
-  audience    String   @default("both")
+  audience     String                @default("both")
   /// "system" for a neutral notice, "organization" for a labelled auto-reply.
-  attribution String   @default("system")
+  attribution  String                @default("system")
   /// Message body, with {{placeholders}} filled from the offer and its parties.
-  body        String
+  ///
+  /// Kept for the rules written before a rule could do more than one thing, and
+  /// as the source the backfill reads. `actions` is what the dispatcher runs.
+  body         String
+  /// What the rule does when it fires, in order.
+  ///
+  /// A rule used to be able to say exactly one thing, to one audience, in one
+  /// place, because the message was welded to the row as body/audience/
+  /// attribution. An action list is the seam that lets one trigger notify a
+  /// student on WhatsApp and the officer in the native chat, and lets new kinds
+  /// of action arrive without another migration.
+  actions      Json                  @default("[]")
   /// Optional narrowing, e.g. { "organizationType": "BANK" }.
-  condition   Json?
+  condition    Json?
   /// Whether it badges the recipient. The actor is never badged for their own action.
-  markUnread  Boolean  @default(true)
+  markUnread   Boolean               @default(true)
   /// Minutes to wait after the event. 0 posts immediately, in the same request.
-  delayMinutes Int     @default(0)
+  delayMinutes Int                   @default(0)
   /// Re-read when a delayed rule comes due: the reason to still send it. A
   /// nudge written three days ago must not go out if the student has replied.
   guard        Json?
   scheduled    ScheduledAutomation[]
-  enabled     Boolean  @default(true)
-  order       Int      @default(1)
+  deliveries   AutomationDelivery[]
+  enabled      Boolean               @default(true)
+  order        Int                   @default(1)
   /// Seeded rules, which an admin may edit or disable but not delete.
-  system      Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  system       Boolean               @default(false)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
 
   @@index([event, enabled])
   @@map("automation_rules")
+}
+
+/// A student who accepted an offer, and what our team found when they checked.
+///
+/// The row exists so an admission can be followed up and, once confirmed, the
+/// student's personal data removed — a student already at a university should
+/// not keep being recommended to universities and lenders.
+///
+/// Keyed on the offer rather than the student: a student may hold several
+/// offers, and it is one specific acceptance being verified.
+model AdmissionFollowUp {
+  id          String    @id @default(uuid())
+  offerId     String    @unique
+  offer       Offer     @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  /// PENDING while nobody has checked, then CONFIRMED or NOT_ADMITTED.
+  status      String    @default("PENDING")
+  /// What the team was told when they checked with the university.
+  note        String?
+  checkedBy   String?
+  confirmedAt DateTime?
+  /// Set once the student's personal data has been redacted. Irreversible.
+  purgedAt    DateTime?
+  purgedBy    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status])
+  @@map("admission_follow_ups")
 }
 
 model AuditLog {
@@ -284,10 +355,22 @@ model StudentProfile {
   settings         Json        @default("{}")
   /// The student's own visibility switch; discovery honours it alongside `status`.
   discoverable     Boolean     @default(true)
+  /// Where this student is in their life with us: STUDENT or ALUMNI.
+  ///
+  /// An alumnus has been admitted somewhere and our team has verified it, so
+  /// they stop being offered to universities and lenders — they already have
+  /// what those offers were for. Kept apart from `discoverable`, which is the
+  /// student's own choice about being seen; this one is ours, and a student
+  /// should not be able to opt back into being recommended after admission.
+  segment          String      @default("STUDENT")
+  alumniSince      DateTime?
+  /// The offer whose admission made them an alumnus.
+  alumniOfferId    String?
   submittedAt      DateTime?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
+  @@index([segment])
   @@map("student_profiles")
 }
 
@@ -319,30 +402,30 @@ model OrganizationProduct {
 /// a product is choosing terms the organisation already agreed to, which is what
 /// makes a one-click invitation safe to offer at all.
 model OfferTemplate {
-  id             String              @id @default(uuid())
-  productId      String
-  product        OrganizationProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id                 String              @id @default(uuid())
+  productId          String
+  product            OrganizationProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
   /// Denormalised so a template can be found without joining through the product.
-  organizationId String
-  name           String
-  description    String?
+  organizationId     String
+  name               String
+  description        String?
   /// The offer's figures, in the vocabulary the comparison and valuation read.
-  terms          Json                @default("{}")
+  terms              Json                @default("{}")
   /// What the student sees first, e.g. "40% tuition".
-  value          String?
-  valueLabel     String?
-  conditions     String?
-  nextSteps      String[]            @default([])
+  value              String?
+  valueLabel         String?
+  conditions         String?
+  nextSteps          String[]            @default([])
   /// Days the student has to respond. Absent falls back to the platform default.
   responseWindowDays Int?
   /// The one a single-click invitation uses. Exactly one per product.
-  isDefault      Boolean             @default(false)
-  archivedAt     DateTime?
+  isDefault          Boolean             @default(false)
+  archivedAt         DateTime?
   /// How many invitations have gone out on it, so a dead template is visible.
-  usedCount      Int                 @default(0)
-  offers         Offer[]
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  usedCount          Int                 @default(0)
+  offers             Offer[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   @@index([organizationId])
   @@index([productId, isDefault])
@@ -414,49 +497,50 @@ enum StudentDecision {
 
 /// One invitation from an organization to a student.
 model Offer {
-  id              String          @id @default(uuid())
-  organizationId  String
-  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  studentUserId   String
-  student         User            @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
-  category        OfferCategory
+  id                   String                @id @default(uuid())
+  organizationId       String
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  studentUserId        String
+  student              User                  @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
+  category             OfferCategory
   /// The template this went out on, when it came from one. Null for a hand-written
   /// offer, so "which template converts" stays an answerable question.
-  templateId      String?
-  template        OfferTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  program         String
-  headline        String
-  status          OfferStatus     @default(SENT)
-  studentDecision StudentDecision @default(PENDING)
+  templateId           String?
+  template             OfferTemplate?        @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  program              String
+  headline             String
+  status               OfferStatus           @default(SENT)
+  studentDecision      StudentDecision       @default(PENDING)
   /// Category-specific figures rendered by the comparison table: tuitionFee and
   /// scholarshipPct for universities, loanAmount and interestRate for banks, and so on.
-  terms           Json            @default("{}")
-  conditions      String?
-  nextSteps       String[]        @default([])
-  contactName     String?
-  contactRole     String?
-  location        String?
-  intake          String?
-  valueLabel      String?
-  value           String?
+  terms                Json                  @default("{}")
+  conditions           String?
+  nextSteps            String[]              @default([])
+  contactName          String?
+  contactRole          String?
+  location             String?
+  intake               String?
+  valueLabel           String?
+  value                String?
   /// Student-side flags; they belong to the one student the offer was sent to.
-  viewedAt        DateTime?
+  viewedAt             DateTime?
   /// When each side last opened this thread. Anything sent after their stamp is
   /// unread for them; the two are tracked separately so one side reading does
   /// not clear the other's badge.
-  studentReadAt      DateTime?
-  organizationReadAt DateTime?
-  savedByStudent  Boolean         @default(false)
-  favourite       Boolean         @default(false)
-  compared        Boolean         @default(false)
-  respondedAt     DateTime?
+  studentReadAt        DateTime?
+  organizationReadAt   DateTime?
+  savedByStudent       Boolean               @default(false)
+  favourite            Boolean               @default(false)
+  compared             Boolean               @default(false)
+  respondedAt          DateTime?
   /// 14 days from creation unless the sender overrides it.
-  expiresAt       DateTime
-  withdrawnAt     DateTime?
-  messages        OfferMessage[]
+  expiresAt            DateTime
+  withdrawnAt          DateTime?
+  messages             OfferMessage[]
   scheduledAutomations ScheduledAutomation[]
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  admissionFollowUp    AdmissionFollowUp?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
   @@index([studentUserId, status])
   @@index([organizationId, status])
@@ -464,30 +548,30 @@ model Offer {
 }
 
 model OfferMessage {
-  id         String   @id @default(uuid())
-  offerId    String
-  offer      Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  offerId     String
+  offer       Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
   /// "institution", "student", or "system" for an automated notice.
-  sender     String
+  sender      String
   /// True when automation wrote this rather than a person, so the UI can say so
   /// instead of implying an officer typed it.
-  automatic  Boolean  @default(false)
+  automatic   Boolean  @default(false)
   /// Which rule produced it, and what it was reacting to. Together with offerId
   /// these make automation idempotent — a retried request cannot post twice.
-  ruleId     String?
-  triggerRef String?
+  ruleId      String?
+  triggerRef  String?
   /// Who an automated message is for: "student", "organization", or "both".
   /// A notice meant for the officer is not shown to the student who caused it.
-  audience   String?
-  authorName String
-  body       String
+  audience    String?
+  authorName  String
+  body        String
   /// One optional attachment. Stored the way student documents are: the bytes on
   /// disk under a random name, the original name kept for display.
   fileName    String?
   storagePath String?
   mimeType    String?
   fileSize    Int?
-  sentAt     DateTime @default(now())
+  sentAt      DateTime @default(now())
 
   @@unique([offerId, ruleId, triggerRef])
   @@index([offerId])
@@ -508,7 +592,6 @@ model StudentDocument {
   @@map("student_documents")
 }
 
-
 /// Permission to look up someone's credit information: who granted it, to whom,
 /// for what, and until when.
 ///
@@ -516,11 +599,11 @@ model StudentDocument {
 /// in its own right rather than a flag on a profile — it outlives the check it
 /// authorised, and a revoked consent must still show that it once existed.
 model CreditConsent {
-  id             String    @id @default(uuid())
+  id             String        @id @default(uuid())
   /// The student whose co-applicant is the subject. The subject is not a user of
   /// the platform, so consent hangs off the student who entered their details.
   studentUserId  String
-  student        User      @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
+  student        User          @relation(fields: [studentUserId], references: [id], onDelete: Cascade)
   /// The organisation allowed to look, or null when the subject is retrieving
   /// their own report — which is their right, and needs no lender.
   organizationId String?
@@ -531,7 +614,7 @@ model CreditConsent {
   /// What they were shown when they agreed, so the wording can change later
   /// without rewriting what anyone actually consented to.
   statement      String
-  grantedAt      DateTime  @default(now())
+  grantedAt      DateTime      @default(now())
   /// Consent is never open-ended; a lender re-asks rather than assuming.
   expiresAt      DateTime
   revokedAt      DateTime?
@@ -606,23 +689,59 @@ model BureauPullAudit {
 /// into the secrets store, so a database dump cannot be used to impersonate a
 /// bank at a credit bureau.
 model OrganizationBureauCredential {
-  id             String       @id @default(uuid())
-  organizationId String       @unique
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  provider       String
+  id              String       @id @default(uuid())
+  organizationId  String       @unique
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider        String
   /// The bank's member identifier with the bureau. Not secret on its own.
-  memberId       String
+  memberId        String
   /// Where the certificate and key actually live: a secrets-manager key, never the material.
-  secretRef      String
+  secretRef       String
   /// So a rotation can be confirmed without reading the secret back.
   certFingerprint String?
-  validFrom      DateTime?
+  validFrom       DateTime?
   /// Certificates expire; the panel warns before a pull starts failing silently.
-  validUntil     DateTime?
-  status         String       @default("ACTIVE")
-  rotatedAt      DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  validUntil      DateTime?
+  status          String       @default("ACTIVE")
+  rotatedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   @@map("organization_bureau_credentials")
+}
+
+/// What actually went out, per channel, per person.
+///
+/// The in-app thread almost never fails to accept a write, so until now there
+/// was nothing worth recording. Email and WhatsApp fail all the time — a
+/// number that has moved, a template Meta has not approved, a provider having
+/// a bad morning — and "did the student get it?" has to be answerable without
+/// reading logs.
+model AutomationDelivery {
+  id                String          @id @default(uuid())
+  ruleId            String?
+  rule              AutomationRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  offerId           String
+  /// What the rule reacted to. With ruleId and actionIndex this is what keeps a
+  /// retried request from sending the same WhatsApp message twice.
+  triggerRef        String
+  actionIndex       Int
+  channel           String
+  /// The user the message was addressed to, where one is known.
+  recipientId       String?
+  /// The address it was sent to, kept so a bounce can be traced to what we used.
+  address           String?
+  /// SENT, FAILED, SKIPPED or BLOCKED. A block is a rule of ours, not an error.
+  status            String
+  /// Why, in words, for anything that is not a plain send.
+  reason            String?
+  providerMessageId String?
+  provider          String?
+  attempts          Int             @default(0)
+  createdAt         DateTime        @default(now())
+
+  @@unique([offerId, ruleId, triggerRef, actionIndex, channel, recipientId])
+  @@index([ruleId, createdAt])
+  @@index([offerId])
+  @@map("automation_deliveries")
 }

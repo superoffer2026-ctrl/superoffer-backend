@@ -14,12 +14,27 @@ import {
 } from './automation.conditions';
 import {
   AUTOMATION_EVENTS,
+  AutomationAction,
   AutomationContext,
   AutomationEvent,
+  CHANNELS,
+  CHANNEL_DESCRIPTIONS,
+  CHANNEL_LABELS,
+  ChannelKey,
   DEFAULT_RULES,
   EVENT_DESCRIPTIONS,
-  PLACEHOLDER_HELP
+  PLACEHOLDER_HELP,
+  NotifyAction,
+  actionsOf,
+  contentFor,
+  delayOf,
+  validateAction
 } from './automation.types';
+import { ChannelRegistry, Recipient } from './channel.providers';
+import { COUNTRIES } from '../reference/data/geo.data';
+
+/** iso2 → dial code, for turning a wizard-entered mobile into an E.164 number. */
+const DIAL_BY_ISO = new Map(COUNTRIES.map(country => [country.iso2, country.dial]));
 
 const firstNameOf = (full: string) => (full || '').trim().split(/\s+/)[0] || 'there';
 
@@ -44,7 +59,7 @@ const asDate = (value: Date | null | undefined) =>
 export class AutomationService {
   private readonly logger = new Logger(AutomationService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private channels: ChannelRegistry) {}
 
   /** Seeded on first use, so a fresh database still has working automation. */
   private async rulesFor(event: AutomationEvent): Promise<AutomationRule[]> {
@@ -76,12 +91,21 @@ export class AutomationService {
 
       for (const rule of rules) {
         if (!this.matches(rule, context)) continue;
-        /** A rule that asked to wait joins the queue instead of posting now. */
-        if (rule.delayMinutes > 0) {
-          await this.schedule(rule, context);
-          continue;
+
+        /*
+         * Instant and scheduled work are split per action, not per rule. One
+         * trigger can post to the thread now and queue a reminder for Friday,
+         * which is what an admin means by "instant actions" and "scheduled
+         * actions" being two different lists on the same rule.
+         */
+        const actions = actionsOf(rule);
+        for (let index = 0; index < actions.length; index++) {
+          if (delayOf(actions[index], rule.delayMinutes) > 0) {
+            await this.schedule(rule, context, index);
+            continue;
+          }
+          written += await this.runAction(rule, context, actions[index], index);
         }
-        if (await this.write(rule, context)) written++;
       }
 
       if (written) {
@@ -108,14 +132,20 @@ export class AutomationService {
    * to, so re-emitting the same event cannot queue the nudge twice — the unique
    * index refuses it, exactly as it does for an immediate write.
    */
-  private async schedule(rule: AutomationRule, context: AutomationContext): Promise<boolean> {
-    const dueAt = new Date(Date.now() + rule.delayMinutes * 60_000);
+  private async schedule(
+    rule: AutomationRule,
+    context: AutomationContext,
+    actionIndex: number
+  ): Promise<boolean> {
+    const action = actionsOf(rule)[actionIndex];
+    const dueAt = new Date(Date.now() + delayOf(action, rule.delayMinutes) * 60_000);
     try {
       await this.prisma.scheduledAutomation.create({
         data: {
           ruleId: rule.id,
           offerId: context.offer.id,
           triggerRef: context.triggerRef,
+          actionIndex,
           actor: context.actor,
           extra: (context.extra ?? undefined) as Prisma.InputJsonValue | undefined,
           dueAt
@@ -189,7 +219,14 @@ export class AutomationService {
           continue;
         }
 
-        const written = await this.write(row.rule, context);
+        const queued = actionsOf(row.rule)[row.actionIndex];
+        if (!queued) {
+          await this.settle(id, 'SKIPPED', 'The action was removed from the rule while this was waiting');
+          skipped++;
+          continue;
+        }
+
+        const written = await this.runAction(row.rule, context, queued, row.actionIndex);
         if (written) {
           await this.touchReadState(row.rule.event as AutomationEvent, context, 1);
           await this.settle(id, 'SENT', null);
@@ -224,7 +261,10 @@ export class AutomationService {
     return {
       scheduled: rows.map(row => ({
         id: row.id,
+        ruleId: row.ruleId,
         rule: row.rule.label,
+        /** Which of the rule's scheduled sets this row is; several can be waiting. */
+        actionIndex: row.actionIndex,
         event: row.rule.event,
         offer: row.offer.program,
         organization: row.offer.organization.name,
@@ -234,6 +274,262 @@ export class AutomationService {
         attempts: row.attempts
       }))
     };
+  }
+
+  /**
+   * Runs everything a rule says to do, and records what happened to each.
+   *
+   * One action can address one audience on several channels; a rule can hold
+   * several actions. Each channel is attempted on its own so a WhatsApp number
+   * that has moved does not stop the thread message the officer is waiting on,
+   * and every attempt leaves a row saying what became of it.
+   *
+   * Returns how many messages actually went out, which is what the caller uses
+   * to decide whether to badge anyone as having something unread.
+   */
+  private async runAction(
+    rule: AutomationRule,
+    context: AutomationContext,
+    action: NotifyAction,
+    index: number
+  ): Promise<number> {
+    if (action.type !== 'notify') return 0;
+
+    let delivered = 0;
+    const channels = (action.channels?.length ? action.channels : ['inapp']) as ChannelKey[];
+
+    for (const channel of channels) {
+      /** Each channel says its own thing, or the action's if it has none. */
+      const said = contentFor(action, channel);
+      const body = this.render(said.body || '', context);
+      if (!body.trim() && channel !== 'whatsapp') continue;
+
+      if (channel === 'inapp') {
+        /*
+         * The thread is one message for the pair, not one per person: both
+         * sides read the same row, and `audience` decides who is shown it.
+         */
+        if (await this.postToThread(rule, context, action, index, body)) delivered++;
+        continue;
+      }
+
+      for (const person of await this.recipientsFor(action.audience, context)) {
+        if (await this.sendOnChannel(rule, context, action, index, channel, person, body, said)) delivered++;
+      }
+    }
+
+    return delivered;
+  }
+
+  /**
+   * Who an action is addressed to, as people with addresses.
+   *
+   * The actor is included — a student who accepted still gets the confirmation
+   * email they would expect; it is only the unread badge that skips them.
+   */
+  private async recipientsFor(audience: string, context: AutomationContext): Promise<Recipient[]> {
+    const people: Recipient[] = [];
+
+    if (audience === 'student' || audience === 'both') {
+      const student = context.offer.student;
+      if (student) {
+        people.push({
+          userId: student.id,
+          name: student.fullName || 'there',
+          email: student.email,
+          phone: student.phone || (await this.profileMobile(student.id))
+        });
+      }
+    }
+
+    if (audience === 'organization' || audience === 'both') {
+      const officers = await this.prisma.user.findMany({
+        where: { organizationId: context.offer.organizationId },
+        select: { id: true, fullName: true, email: true, phone: true }
+      });
+      for (const officer of officers) {
+        people.push({
+          userId: officer.id,
+          name: officer.fullName || context.offer.organization.name,
+          email: officer.email,
+          phone: officer.phone
+        });
+      }
+    }
+
+    return people;
+  }
+
+  /**
+   * The mobile a student typed into the wizard, in the form WhatsApp wants.
+   *
+   * `User.phone` is only set for someone who signed in with an OTP, so for most
+   * students it is empty — while the number they actually use is sitting in the
+   * personal section of their profile, split into an iso2 country and digits.
+   * Without this, WhatsApp would have almost nobody to send to.
+   *
+   * Returns null rather than a half-formed number when the country is unknown:
+   * a delivery skipped with a reason is better than one sent to +9876543210.
+   */
+  private async profileMobile(userId: string): Promise<string | null> {
+    const profile = await this.prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { personal: true }
+    });
+    const personal = (profile?.personal ?? {}) as Record<string, string>;
+    const digits = (personal.mobileNumber || '').replace(/\D/g, '');
+    if (!digits) return null;
+
+    const dial = DIAL_BY_ISO.get((personal.mobileCountry || '').trim().toUpperCase());
+    if (!dial) return null;
+    return `+${dial.replace(/\D/g, '')}${digits}`;
+  }
+
+  /**
+   * One outbound message, and the row that says what happened to it.
+   *
+   * Nothing here throws upward. A provider that is not configured, a person
+   * with no mobile number, and a template Meta rejected are three different
+   * outcomes, and an operator asking "why didn't they get it?" should be able
+   * to tell them apart without reading logs.
+   */
+  private async sendOnChannel(
+    rule: AutomationRule,
+    context: AutomationContext,
+    action: AutomationAction,
+    actionIndex: number,
+    channel: ChannelKey,
+    person: Recipient,
+    body: string,
+    said: { subject?: string; template?: { name: string; params: string[] } }
+  ): Promise<boolean> {
+    const base = {
+      ruleId: rule.id,
+      offerId: context.offer.id,
+      triggerRef: context.triggerRef,
+      actionIndex,
+      channel,
+      recipientId: person.userId
+    };
+
+    const record = async (
+      status: string,
+      extra: { reason?: string; address?: string; provider?: string; providerMessageId?: string }
+    ) => {
+      try {
+        await this.prisma.automationDelivery.create({
+          data: { ...base, status, attempts: 1, ...extra }
+        });
+      } catch (error) {
+        /** The unique index refusing a repeat is the mechanism working. */
+        if ((error as Prisma.PrismaClientKnownRequestError).code !== 'P2002') throw error;
+        return false;
+      }
+      return true;
+    };
+
+    const provider = this.channels.get(channel);
+    if (!provider) {
+      await record('SKIPPED', { reason: `No provider is registered for ${channel}` });
+      return false;
+    }
+    if (!provider.available()) {
+      await record('SKIPPED', { reason: `${CHANNEL_LABELS[channel]} is not configured` });
+      return false;
+    }
+
+    const address = provider.addressOf(person);
+    if (!address) {
+      await record('SKIPPED', { reason: `No ${channel === 'email' ? 'email address' : 'mobile number'} on the account`, address: undefined });
+      return false;
+    }
+
+    const template = said.template;
+    try {
+      const result = await provider.send({
+        to: person,
+        body,
+        subject: this.render(said.subject || rule.label, context),
+        template: template
+          ? { name: template.name, params: (template.params || []).map(param => this.render(param, context)) }
+          : undefined
+      });
+      return await record('SENT', {
+        address,
+        provider: result.provider,
+        providerMessageId: result.providerMessageId
+      });
+    } catch (error) {
+      const reason = (error as Error).message;
+      this.logger.warn(`${channel} delivery failed for offer ${context.offer.id}: ${reason}`);
+      await record('FAILED', { address, reason: reason.slice(0, 500) });
+      return false;
+    }
+  }
+
+  /** The native chat. Unchanged behaviour, now reached through an action. */
+  private async postToThread(
+    rule: AutomationRule,
+    context: AutomationContext,
+    action: AutomationAction,
+    actionIndex: number,
+    body: string
+  ): Promise<boolean> {
+    const fromOrganization = action.attribution === 'organization';
+    try {
+      await this.prisma.offerMessage.create({
+        data: {
+          offerId: context.offer.id,
+          sender: fromOrganization ? 'institution' : 'system',
+          automatic: true,
+          ruleId: rule.id,
+          /*
+           * The thread's uniqueness is on (offer, rule, triggerRef), so a rule
+           * with two thread-posting actions would collide with itself. The
+           * index disambiguates them while leaving the first action's key
+           * exactly as it was, which keeps existing rows idempotent.
+           */
+          triggerRef: actionIndex === 0 ? context.triggerRef : `${context.triggerRef}#${actionIndex}`,
+          audience: action.audience,
+          authorName: fromOrganization
+            ? context.offer.contactName || context.offer.organization.name
+            : 'SuperOffer',
+          body
+        }
+      });
+      return true;
+    } catch (error) {
+      if ((error as Prisma.PrismaClientKnownRequestError).code === 'P2002') return false;
+      throw error;
+    }
+  }
+
+  /** What the admin panel shows about each channel, and whether it can send. */
+  channelStatus() {
+    const status = this.channels.status();
+    return CHANNELS.map(channel => {
+      const found = status.find(entry => entry.channel === channel);
+      return {
+        channel,
+        label: CHANNEL_LABELS[channel],
+        describes: CHANNEL_DESCRIPTIONS[channel],
+        configured: found?.configured ?? false,
+        provider: found?.provider ?? 'none'
+      };
+    });
+  }
+
+  /** The last few things a rule actually did, newest first. */
+  async deliveriesFor(ruleId: string, take = 20) {
+    return this.prisma.automationDelivery.findMany({
+      where: { ruleId },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true, channel: true, status: true, reason: true, address: true,
+        provider: true, createdAt: true
+      }
+    });
   }
 
   private async write(rule: AutomationRule, context: AutomationContext): Promise<boolean> {
@@ -331,6 +627,7 @@ export class AutomationService {
         audience: input.audience || 'both',
         attribution: input.attribution || 'system',
         body: input.body as string,
+        actions: (input.actions ?? []) as Prisma.InputJsonValue,
         condition: (input.condition ?? undefined) as Prisma.InputJsonValue | undefined,
         guard: (input.guard ?? undefined) as Prisma.InputJsonValue | undefined,
         delayMinutes: input.delayMinutes ?? 0,
@@ -355,6 +652,7 @@ export class AutomationService {
         audience: input.audience ?? existing.audience,
         attribution: input.attribution ?? existing.attribution,
         body: input.body ?? existing.body,
+        actions: (input.actions ?? existing.actions ?? []) as Prisma.InputJsonValue,
         condition: (input.condition ?? existing.condition ?? undefined) as Prisma.InputJsonValue | undefined,
         guard: (input.guard ?? existing.guard ?? undefined) as Prisma.InputJsonValue | undefined,
         delayMinutes: input.delayMinutes ?? existing.delayMinutes,
@@ -431,6 +729,16 @@ export class AutomationService {
   }
 
   private assertValid(input: Partial<AutomationRule>) {
+    /*
+     * Every complaint at once, rather than the first one. An admin fixing a
+     * rule with three problems should see three, not discover them in turn.
+     */
+    const actions = Array.isArray(input.actions) ? input.actions : [];
+    const actionProblems = actions.flatMap((action, index) => validateAction(action, index));
+    if (actionProblems.length) {
+      throw new BadRequestException({ code: 'INVALID_ACTIONS', message: actionProblems.join(' ') });
+    }
+
     if (!input.event || !(AUTOMATION_EVENTS as readonly string[]).includes(input.event)) {
       throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Pick a trigger from the supported list' });
     }

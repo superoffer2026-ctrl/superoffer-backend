@@ -23,6 +23,7 @@ import {
 } from '../reference/data/wizard.data';
 import { FormFieldDef, FormSchemaDef, FormSectionDef } from './form-schema.types';
 import { FormsService } from './forms.service';
+import { OptionSetsService } from './option-sets.service';
 
 /**
  * The option lists a schema may point at, so an admin picks "Countries" rather
@@ -69,17 +70,51 @@ const isBlank = (value: unknown) =>
  */
 @Injectable()
 export class SchemaValidatorService {
-  constructor(private forms: FormsService) {}
+  constructor(private forms: FormsService, private optionSets: OptionSetsService) {}
 
   async sectionFor(sectionKey: string, variant = 'DEFAULT'): Promise<FormSectionDef | undefined> {
     const schema: FormSchemaDef = await this.forms.published(variant);
     return schema.sections.find(section => section.key === sectionKey);
   }
 
-  /** Options a field accepts, whether listed inline or borrowed from reference data. */
+  /** Every string inside a stored value, however deeply it is nested. */
+  private valuesIn(stored: unknown): string[] {
+    if (typeof stored === 'string') return stored ? [stored] : [];
+    if (Array.isArray(stored)) return stored.flatMap(entry => this.valuesIn(entry));
+    if (stored && typeof stored === 'object') return Object.values(stored).flatMap(entry => this.valuesIn(entry));
+    return [];
+  }
+
+  /**
+   * What this field accepts for this student.
+   *
+   * The published list, plus anything they already hold. An admin removing an
+   * option stops it being chosen again; it does not make a profile that chose
+   * it last year unsaveable, which is what a plain membership check would do
+   * the next time that student edited an unrelated field in the same section.
+   */
+  private allowedFor(field: FormFieldDef, previous?: unknown): readonly string[] | undefined {
+    const options = this.optionsFor(field);
+    if (!options) return undefined;
+    const held = this.valuesIn(previous);
+    if (!held.length) return options;
+    const widened = new Set([...options, ...held]);
+    return [...widened];
+  }
+
+  /**
+   * Options a field accepts, whether listed inline or borrowed from a named set.
+   *
+   * The named set is read from the store rather than the constant it was seeded
+   * from, so an admin's edit reaches validation and not just the dropdown.
+   * OPTION_SOURCES stays as the fallback for the moment before the store has
+   * loaded, and for a key seeded but not yet written.
+   */
   optionsFor(field: FormFieldDef): readonly string[] | undefined {
     if (field.optionsSource?.startsWith('reference:')) {
-      return OPTION_SOURCES[field.optionsSource.slice('reference:'.length)];
+      const key = field.optionsSource.slice('reference:'.length);
+      const stored = this.optionSets.valuesFor(key);
+      return stored.length ? stored : OPTION_SOURCES[key];
     }
     return field.options?.length ? field.options : undefined;
   }
@@ -93,11 +128,16 @@ export class SchemaValidatorService {
    * this widens the payload to the admin's form rather than to anything a client
    * cares to send.
    */
+  /**
+   * @param previous What this student already had in this section, so an option
+   *   removed since they chose it does not make their profile unsaveable.
+   */
   async mergeAndValidate(
     sectionKey: string,
     validated: Record<string, unknown>,
     rawBody: Record<string, unknown>,
-    variant = 'DEFAULT'
+    variant = 'DEFAULT',
+    previous?: Record<string, unknown>
   ) {
     const section = await this.sectionFor(sectionKey, variant);
     const merged: Record<string, unknown> = { ...validated };
@@ -122,7 +162,7 @@ export class SchemaValidatorService {
       }
     }
 
-    await this.validate(sectionKey, merged, variant);
+    await this.validate(sectionKey, merged, variant, previous);
     return merged;
   }
 
@@ -130,7 +170,17 @@ export class SchemaValidatorService {
    * Throws a `VALIDATION_ERROR` listing everything wrong, in the same shape the
    * class-validator DTOs produced, so existing clients see no difference.
    */
-  async validate(sectionKey: string, payload: Record<string, unknown>, variant = 'DEFAULT') {
+  /**
+   * @param previous What this student already had in this section. An option an
+   *   admin has since removed stays acceptable for whoever already chose it, so
+   *   tightening a list never blocks a profile that predates the change.
+   */
+  async validate(
+    sectionKey: string,
+    payload: Record<string, unknown>,
+    variant = 'DEFAULT',
+    previous?: Record<string, unknown>
+  ) {
     const section = await this.sectionFor(sectionKey, variant);
     /** No schema for this section means nothing to enforce beyond the code rules. */
     if (!section) return payload;
@@ -147,7 +197,7 @@ export class SchemaValidatorService {
           continue;
         }
         /** Each row is checked against the row definition an admin can edit. */
-        errors.push(...this.checkRows(field, payload[field.key]));
+        errors.push(...this.checkRows(field, payload[field.key], previous?.[field.key]));
         continue;
       }
 
@@ -158,7 +208,7 @@ export class SchemaValidatorService {
         continue;
       }
 
-      errors.push(...this.checkValue(field, value));
+      errors.push(...this.checkValue(field, value, previous?.[field.key]));
     }
 
     if (errors.length) {
@@ -198,7 +248,7 @@ export class SchemaValidatorService {
    * level, an exam row on its status — so each is checked in its own right
    * rather than against the section around it.
    */
-  private checkRows(field: FormFieldDef, value: unknown): string[] {
+  private checkRows(field: FormFieldDef, value: unknown, previous?: unknown): string[] {
     const rows = field.itemFields || [];
     if (!rows.length || isBlank(value)) return [];
     if (!Array.isArray(value)) return [];
@@ -236,9 +286,9 @@ export class SchemaValidatorService {
     return wanted.includes(String(actual ?? ''));
   }
 
-  private checkValue(field: FormFieldDef, value: unknown): string[] {
+  private checkValue(field: FormFieldDef, value: unknown, previous?: unknown): string[] {
     const errors: string[] = [];
-    const options = this.optionsFor(field);
+    const options = this.allowedFor(field, previous);
 
     if (field.type === 'multiselect') {
       if (!Array.isArray(value)) return [`${field.label} must be a list`];
