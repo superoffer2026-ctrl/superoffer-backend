@@ -139,7 +139,12 @@ export interface LoanReadiness {
   coApplicantRelationship: string;
   monthlyIncome: number;
   existingEmi: number;
+  hasExistingLoan: string;
+  loanAmountRequested: number;
   employmentType: string;
+  /** From onboarding's Financial Information step, not the loan-eligibility form. */
+  fundingSource: string;
+  earningMembers: string;
   /** A band, never a score. Absent when nothing has been checked. */
   creditBand: string | null;
   /** SCORED, NO_HISTORY, and so on — a thin file is not a bad one. */
@@ -451,9 +456,13 @@ export class DiscoveryService {
   /**
    * The household summary, or null when the reader has no business seeing it.
    *
-   * Two gates, both of which have to be open: the reader is a lender, and the
-   * co-applicant has agreed to a check. A university never sees this, and a
-   * lender sees nothing until the family has opened the door.
+   * One gate on the whole block: the reader is a lender. The figures a family
+   * chose to save on their loan-eligibility form (income, EMI, what they're
+   * asking for) are their own declared budget, not a bureau record, so they
+   * reach a lender as soon as they exist — the same way the rest of a
+   * discoverable profile does. The credit band is the one piece that stays
+   * behind its own gate, because that is an actual bureau pull the family
+   * had to separately agree to: it only appears once a check has actually run.
    */
   private async loanReadinessFor(
     organization: Organization,
@@ -465,10 +474,12 @@ export class DiscoveryService {
     const coApplicant = (profile.coApplicant as Record<string, unknown>) || {};
     if (!Object.keys(coApplicant).length) return null;
 
-    const consent = await this.prisma.creditConsent.findFirst({
-      where: { studentUserId: profile.userId, kind: 'SELF_PULL', revokedAt: null, expiresAt: { gt: new Date() } }
-    });
-    if (!consent) return null;
+    /** The household context from onboarding's Financial Information step — how
+     *  the family plans to fund the studies, and who in it earns — read alongside
+     *  the co-applicant's own figures rather than instead of them. */
+    const financial = (profile.financial as Record<string, unknown>) || {};
+    const fundingSource = String(financial['fundingSource'] || '');
+    const earningMembers = ((financial['earningMembers'] as string[]) || []).join(', ');
 
     const check = await this.prisma.creditCheck.findFirst({
       where: { studentUserId: profile.userId, kind: 'SELF_PULL' },
@@ -477,6 +488,7 @@ export class DiscoveryService {
 
     const monthlyIncome = num(coApplicant['monthlyIncome']);
     const existingEmi = num(coApplicant['existingEmi']);
+    const loanAmountRequested = num(coApplicant['loanAmountRequested']);
     const employmentType = String(coApplicant['employmentType'] || '');
 
     const expected = FINANCIAL_DOCUMENT_FIELDS.filter(
@@ -495,7 +507,11 @@ export class DiscoveryService {
       coApplicantRelationship: String(coApplicant['relationship'] || ''),
       monthlyIncome,
       existingEmi,
+      hasExistingLoan: String(coApplicant['hasExistingLoan'] || ''),
+      loanAmountRequested,
       employmentType,
+      fundingSource,
+      earningMembers,
       creditBand: check?.band ?? null,
       creditOutcome: check?.outcome ?? null,
       checkedAt: check?.pulledAt ?? null,

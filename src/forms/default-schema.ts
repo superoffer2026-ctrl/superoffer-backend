@@ -77,7 +77,7 @@ const STUDY: FormSectionDef = {
     }),
     field('studyLevel', 'What do you want to study?', 'multiselect', 2, {
       required: true,
-      optionsSource: 'reference:fieldsOfStudy'
+      optionsSource: 'reference:studyLevels'
     }),
     field('fieldOfInterest', 'Program of Interest', 'multiselect', 3, {
       required: true,
@@ -367,70 +367,87 @@ const FINANCIAL: FormSectionDef = {
 };
 
 /**
- * The parent or guardian who stands as co-applicant on an education loan.
+ * Financial eligibility for an education loan — asked as a short, one-question-
+ * at-a-time flow rather than a single long form, then an optional credit check.
  *
- * A student of twenty-one has little or no credit history, so a lender reads the
- * co-applicant's file, not theirs. The identity fields here are exactly what a
- * credit bureau needs to match a person; the money fields are what an
- * eligibility check needs. Nothing else is asked for.
+ * The student stays the user throughout; the questions are about whoever is
+ * financially supporting them (a parent, a guardian, themselves, or someone
+ * else), because a lender reads that person's income and credit record, not
+ * the student's. The identity fields exist only because a credit bureau needs
+ * them to match a person — asked once, right before the check, not up front.
  */
 const CO_APPLICANT: FormSectionDef = {
   key: 'coApplicant',
   label: 'Parent or Guardian',
   description: 'The co-applicant on an education loan',
-  route: 'co-applicant',
+  /** No wizard route — reached from the dashboard's loan flow instead, not as an onboarding step. */
+  route: '',
   column: 'coApplicant',
   order: 8,
   enabled: true,
   groups: [
-    { key: 'identity', label: 'Who they are', order: 1 },
-    { key: 'income', label: 'What they earn', order: 2 }
+    { key: 'income', label: 'Financial eligibility', order: 1 },
+    { key: 'identity', label: 'Who they are', order: 2 }
   ],
   fields: [
-    field('name', 'Parent or Guardian Name', 'text', 1, {
-      group: 'identity',
+    field('relationship', 'Who will be financially supporting your education?', 'select', 1, {
+      group: 'income',
       required: true,
-      placeholder: 'As printed on their PAN card',
-      helpText: 'It must match their PAN exactly, or a credit check cannot identify them.'
+      options: ['Parent', 'Guardian', 'Self', 'Other']
     }),
-    field('relationship', 'Relationship', 'select', 2, {
-      group: 'identity',
+    field('employmentType', 'What is their employment or income type?', 'select', 2, {
+      group: 'income',
       required: true,
-      options: ['Father', 'Mother', 'Guardian']
+      /** Matches the casing FINANCIAL_DOCUMENT_FIELDS.categories keys off, in discovery.service.ts's bank-facing readiness snapshot. */
+      options: ['Salaried', 'Self-Employed', 'Business', 'Other']
     }),
-    field('panNumber', 'PAN Number', 'text', 3, {
-      group: 'identity',
-      required: true,
-      placeholder: 'ABCDE1234F',
-      helpText: 'Stored encrypted. Only the last four characters are ever shown back.',
-      validation: { pattern: '^[A-Za-z]{5}[0-9]{4}[A-Za-z]$', message: 'Enter a PAN in the form ABCDE1234F' }
-    }),
-    field('dateOfBirth', 'Date of Birth', 'date', 4, { group: 'identity', required: true }),
-    field('mobileNumber', 'Mobile Number', 'tel', 5, {
-      group: 'identity',
-      required: true,
-      placeholder: '98765 43210',
-      helpText: 'Used to confirm it is really them before any credit check runs.'
-    }),
-    field('monthlyIncome', 'Monthly Income', 'number', 6, {
+    field('monthlyIncome', 'What is their approximate monthly income?', 'number', 3, {
       group: 'income',
       required: true,
       placeholder: 'e.g. 85000',
       validation: { min: 0 },
       helpText: 'Take-home pay per month, before any loan repayments.'
     }),
-    field('employmentType', 'Employment Type', 'select', 7, {
+    field('hasExistingLoan', 'Do they currently have any loans or EMIs?', 'select', 4, {
       group: 'income',
       required: true,
-      /** Matches the employment categories the document checklist is keyed on. */
-      options: ['Salaried', 'Self-Employed', 'Business', 'Agriculture', 'Other']
+      options: ['Yes', 'No']
     }),
-    field('existingEmi', 'Existing Monthly EMI', 'number', 8, {
+    field('existingEmi', 'What is their approximate total monthly EMI?', 'number', 5, {
       group: 'income',
       required: true,
       placeholder: 'e.g. 12000',
       validation: { min: 0 },
-      helpText: 'Everything they already repay each month. Enter 0 if nothing.'
+      helpText: 'Everything they already repay each month, across all loans.',
+      /** Informational — the step-by-step flow itself skips this question when Q4 is "No". */
+      visibleWhen: { field: 'hasExistingLoan', equals: ['Yes'] }
+    }),
+    field('loanAmountRequested', 'How much financial assistance are you looking for?', 'number', 6, {
+      group: 'income',
+      required: true,
+      placeholder: 'e.g. 2000000',
+      validation: { min: 0 },
+      helpText: 'A rough figure is fine — this helps lenders gauge the loan size.'
+    }),
+    field('name', 'Parent or Guardian Name', 'text', 7, {
+      group: 'identity',
+      required: true,
+      placeholder: 'As printed on their PAN card',
+      helpText: 'It must match their PAN exactly, or a credit check cannot identify them.'
+    }),
+    field('panNumber', 'PAN Number', 'text', 8, {
+      group: 'identity',
+      required: true,
+      placeholder: 'ABCDE1234F',
+      helpText: 'Stored encrypted. Only the last four characters are ever shown back.',
+      validation: { pattern: '^[A-Za-z]{5}[0-9]{4}[A-Za-z]$', message: 'Enter a PAN in the form ABCDE1234F' }
+    }),
+    field('dateOfBirth', 'Date of Birth', 'date', 9, { group: 'identity', required: true }),
+    field('mobileNumber', 'Mobile Number', 'tel', 10, {
+      group: 'identity',
+      required: true,
+      placeholder: '98765 43210',
+      helpText: 'Used to confirm it is really them before any credit check runs.'
     })
   ]
 };

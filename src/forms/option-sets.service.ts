@@ -5,7 +5,7 @@ import { COUNTRIES, INDIA_CITIES } from '../reference/data/geo.data';
 import {
   COMPETITIVE_EXAM_OPTIONS, CURRICULUM_OPTIONS, EDUCATION_GAP_OPTIONS, EDUCATION_YEARS,
   ENGLISH_EXAM_OPTIONS, EXAM_STATUS_OPTIONS, FIELDS_OF_STUDY, INTAKE_OPTIONS,
-  START_YEARS, STUDY_COUNTRIES, UNIVERSITY_OPTIONS
+  PROGRAM_LEVELS, START_YEARS, STUDY_COUNTRIES, UNIVERSITY_OPTIONS
 } from '../reference/data/master-sheet.data';
 import {
   CURRENCY_OPTIONS, EARNING_MEMBER_OPTIONS, EMPLOYMENT_CATEGORY_OPTIONS,
@@ -25,6 +25,7 @@ const SEED: Array<{ key: string; label: string; description: string; values: rea
   { key: 'indiaCities', label: 'Indian cities', description: 'Cities offered when the country is India', values: INDIA_CITIES },
   { key: 'studyCountries', label: 'Study destinations', description: 'Where a student may choose to study', values: STUDY_COUNTRIES },
   { key: 'fieldsOfStudy', label: 'Fields of study', description: 'Subjects a student can name', values: FIELDS_OF_STUDY },
+  { key: 'studyLevels', label: 'Study levels', description: 'Degree levels a student can pursue', values: PROGRAM_LEVELS },
   { key: 'intakeOptions', label: 'Intakes', description: 'Terms a student can start in', values: INTAKE_OPTIONS },
   { key: 'startYears', label: 'Start years', description: 'Years a student can start in', values: START_YEARS },
   { key: 'qualificationOptions', label: 'Qualification levels', description: 'Levels of education', values: QUALIFICATION_OPTIONS },

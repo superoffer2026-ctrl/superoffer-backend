@@ -9,6 +9,7 @@ import {
   EXAM_STATUS_OPTIONS,
   FIELDS_OF_STUDY,
   INTAKE_OPTIONS,
+  PROGRAM_LEVELS,
   START_YEARS,
   STUDY_COUNTRIES,
   UNIVERSITY_OPTIONS
@@ -36,6 +37,7 @@ const OPTION_SOURCES: Record<string, readonly string[]> = {
   indiaCities: INDIA_CITIES,
   studyCountries: STUDY_COUNTRIES,
   fieldsOfStudy: FIELDS_OF_STUDY,
+  studyLevels: PROGRAM_LEVELS,
   intakeOptions: INTAKE_OPTIONS,
   startYears: START_YEARS,
   qualificationOptions: QUALIFICATION_OPTIONS,

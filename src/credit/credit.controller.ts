@@ -5,7 +5,6 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ApprovedOrganizationGuard } from '../auth/approved-organization.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { SchemaValidatorService } from '../forms/schema-validator.service';
 import type { Organization } from '@prisma/client';
 import { CreditService } from './credit.service';
 import { assessEligibility } from './eligibility';
@@ -32,18 +31,22 @@ const LENDER_STATEMENT =
 @Roles('STUDENT')
 @Controller('students/me')
 export class StudentCreditController {
-  constructor(private credit: CreditService, private schema: SchemaValidatorService) {}
+  constructor(private credit: CreditService) {}
 
   @Get('co-applicant')
   read(@CurrentUser() user: AuthenticatedUser) {
     return this.credit.readCoApplicant(user.id);
   }
 
+  /**
+   * Answered one question at a time, not as a single form — so unlike every other
+   * section, a save here is never required to carry the whole set. What is
+   * actually required (an identity before a credit check can run) is enforced
+   * where it matters, in `CreditService.subjectFor`, not on every partial save.
+   */
   @Put('co-applicant')
   async save(@CurrentUser() user: AuthenticatedUser, @Req() request: { body: Record<string, unknown> }) {
-    /** The published form decides what is asked for and what is required. */
-    const payload = await this.schema.mergeAndValidate('coApplicant', {}, request.body);
-    return this.credit.saveCoApplicant(user.id, payload);
+    return this.credit.saveCoApplicant(user.id, request.body);
   }
 
   /** What a lender would make of this household, before anyone has been invited. */

@@ -32,6 +32,10 @@ export class CreateOfferDto {
   @IsString() @IsNotEmpty()
   headline!: string;
 
+  /** The template's own description, distinct from `conditions` (the terms a student must meet). */
+  @IsOptional() @IsString()
+  description?: string;
+
   /**
    * Category-specific figures the comparison table renders — `tuitionFee`,
    * `scholarshipPct`, `durationYears` for universities; `loanAmount`,

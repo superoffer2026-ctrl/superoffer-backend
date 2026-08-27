@@ -16,6 +16,7 @@ import {
   FIELDS_OF_STUDY,
   INTAKE_OPTIONS,
   MBBS_ONLY_COUNTRIES,
+  PROGRAM_LEVELS,
   START_YEARS,
   STUDY_COUNTRIES,
   UNIVERSITY_OPTIONS
@@ -61,6 +62,7 @@ export class ReferenceService {
     return {
       studyCountries: this.list('studyCountries', STUDY_COUNTRIES),
       mbbsOnlyCountries: MBBS_ONLY_COUNTRIES,
+      studyLevels: this.list('studyLevels', PROGRAM_LEVELS),
       fieldsOfStudy: this.list('fieldsOfStudy', FIELDS_OF_STUDY),
       intakeOptions: this.list('intakeOptions', INTAKE_OPTIONS),
       startYears: this.list('startYears', START_YEARS)

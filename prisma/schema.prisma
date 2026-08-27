@@ -509,6 +509,9 @@ model Offer {
   template             OfferTemplate?        @relation(fields: [templateId], references: [id], onDelete: SetNull)
   program              String
   headline             String
+  /// The template's own description, carried onto the offer it was sent from —
+  /// distinct from `conditions`, which is the terms a student must meet.
+  description          String?
   status               OfferStatus           @default(SENT)
   studentDecision      StudentDecision       @default(PENDING)
   /// Category-specific figures rendered by the comparison table: tuitionFee and
