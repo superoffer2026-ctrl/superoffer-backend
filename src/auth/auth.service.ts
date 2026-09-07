@@ -15,7 +15,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { OtpRequestDto, OtpVerifyDto } from './dto/otp.dto';
 import { RegisterDto } from './dto/register.dto';
-import { generateOtpCode, hashOtp, hashToken, verifyOtpHash } from './otp.util';
+import { JwtPayload } from './jwt.strategy';
+import { generateOtpCode, hashOtp, hashToken, verifyOtpHash, verifyTokenHash } from './otp.util';
 import { WHATSAPP_SENDER, WhatsAppSender } from './whatsapp-sender';
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -218,6 +219,77 @@ export class AuthService {
     return this.issueTokens(updated, meta);
   }
 
+  /**
+   * Trades a live refresh token for a fresh access token on the *same* session.
+   *
+   * The refresh token is signed with the same secret and the same claims as the
+   * access token, so a valid signature proves nothing about which of the two was
+   * presented. What separates them is the stored digest: only the refresh token
+   * hashes to `refreshTokenHash`, so that comparison is the real check and an
+   * access token replayed here is refused.
+   *
+   * Every failure returns one indistinguishable 401. Saying *why* a refresh was
+   * refused would tell an attacker holding a stolen token whether the session
+   * exists, whether it was signed out, and whether the account is still live.
+   */
+  async refresh(presentedToken: string) {
+    /** One shape for every rejection below — see the note above. */
+    const rejected = () =>
+      new UnauthorizedException({ code: 'SESSION_EXPIRED', message: 'Your session has ended. Please sign in again.' });
+
+    let payload: JwtPayload;
+    try {
+      payload = await this.jwt.verifyAsync<JwtPayload>(presentedToken);
+    } catch {
+      throw rejected();
+    }
+    if (!payload?.sub || !payload.sid) throw rejected();
+
+    const session = await this.prisma.authSession.findUnique({
+      where: { id: payload.sid },
+      select: { id: true, userId: true, revokedAt: true, expiresAt: true, refreshTokenHash: true }
+    });
+    if (
+      !session ||
+      session.userId !== payload.sub ||
+      session.revokedAt ||
+      session.expiresAt.getTime() < Date.now() ||
+      !verifyTokenHash(presentedToken, session.refreshTokenHash)
+    ) {
+      throw rejected();
+    }
+
+    /*
+     * A refresh can land thirty days after the sign-in that minted the token, so
+     * the claims inside it are not evidence of anything current. The account is
+     * re-read and re-authorised here, and the new token is built from that row —
+     * otherwise a suspended user, or one whose organisation was rejected after
+     * they signed in, keeps working indefinitely on a token nobody can recall.
+     */
+    const user = (await this.prisma.user.findUnique({
+      where: { id: session.userId },
+      include: { organization: true }
+    })) as UserWithOrganization | null;
+
+    if (!user || user.status !== 'ACTIVE') throw rejected();
+    if (user.organization?.verificationStatus === 'REJECTED') throw rejected();
+
+    const accessTtl = this.accessTokenTtl();
+    const accessToken = this.jwt.sign(
+      {
+        sub: user.id,
+        /** Same session: refreshing is not a new sign-in, and rotation is not implemented. */
+        sid: session.id,
+        email: user.email ?? undefined,
+        phone: user.phone ?? undefined,
+        role: user.role
+      },
+      { expiresIn: accessTtl }
+    );
+
+    return { access_token: accessToken, expires_in: accessTtl, role: user.role };
+  }
+
   async me(userId: string) {
     const user = (await this.prisma.user.findUnique({ where: { id: userId }, include: { organization: true } })) as UserWithOrganization | null;
     if (!user) throw new UnauthorizedException();
@@ -390,6 +462,10 @@ export class AuthService {
     return this.issueTokens(updated, meta);
   }
 
+  private accessTokenTtl(): number {
+    return Number(this.config.get('ACCESS_TOKEN_TTL_SECONDS')) || 3600;
+  }
+
   private otpSecret(): string {
     return (
       this.config.get<string>('OTP_HASH_SECRET') ||
@@ -399,7 +475,7 @@ export class AuthService {
   }
 
   private async issueTokens(user: UserWithOrganization, meta: SessionMeta) {
-    const accessTtl = Number(this.config.get('ACCESS_TOKEN_TTL_SECONDS')) || 3600;
+    const accessTtl = this.accessTokenTtl();
     const refreshTtl = Number(this.config.get('REFRESH_TOKEN_TTL_SECONDS')) || 2_592_000;
 
     /**

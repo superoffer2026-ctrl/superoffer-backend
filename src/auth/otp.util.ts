@@ -12,3 +12,17 @@ export const verifyOtpHash = (code: string, storedHash: string, secret: string):
 };
 
 export const hashToken = (token: string): string => crypto.createHash('sha256').update(token).digest('hex');
+
+/**
+ * Constant-time check of a presented token against a stored `hashToken` digest.
+ *
+ * An absent hash never matches: a session row is created with an empty
+ * `refreshTokenHash` and patched a moment later (see AuthService.issueTokens),
+ * and that window must not be a way in.
+ */
+export const verifyTokenHash = (token: string, storedHash: string): boolean => {
+  if (!storedHash) return false;
+  const expected = Buffer.from(hashToken(token));
+  const actual = Buffer.from(storedHash);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+};

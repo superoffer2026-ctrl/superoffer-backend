@@ -114,6 +114,49 @@ Password login for every role. `identifier` accepts an email (or a phone number)
 
 Failed-attempt counters and lockouts are persisted in Postgres on the `users` row — they survive a server restart.
 
+### `POST /auth/refresh`
+Trades a live refresh token for a new access token. Unauthenticated by design — it is
+called precisely when the access token has expired.
+
+Send back the `refresh_token` from the login (or OTP verify) response. `refreshToken`
+is accepted as an alias.
+
+```json
+// Request
+{ "refresh_token": "eyJhbGciOiJIUzI1NiIs..." }
+```
+```json
+// 200 OK
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "expires_in": 3600,
+  "role": "STUDENT"
+}
+```
+
+The refresh token is **not** rotated — keep using the one login gave you until it
+expires or you sign out. The session's 30-day expiry is absolute and is *not* extended
+by refreshing, so a session always ends 30 days after sign-in.
+
+`role` is re-read from the database rather than taken from the token, so a role change
+takes effect on the next refresh.
+
+| Error | Status | Code |
+|---|---|---|
+| Missing/empty `refresh_token` | 400 | class-validator message |
+| Anything else | 401 | `SESSION_EXPIRED` |
+
+Every rejection returns the **same** 401 `SESSION_EXPIRED` body, deliberately: an
+invalid signature, an expired token, an unknown session, a signed-out session, an
+access token replayed here, a suspended account and a rejected organization are
+indistinguishable to the caller. Telling them apart would let someone holding a stolen
+token probe which sessions and accounts exist.
+
+Refreshing stops working as soon as the session is revoked — so `POST /auth/logout`
+and another device's `POST /auth/password` both end it, and a suspended user or a
+newly-rejected organization is locked out on their next refresh rather than up to an
+hour later.
+
 ### `POST /auth/otp/request`
 Student login/registration, step 1. Creates the student account on first use. Sends a 6-digit code over WhatsApp (mock sender in development — the code is logged to the server console instead of being delivered).
 

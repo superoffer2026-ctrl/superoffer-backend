@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshDto } from './dto/refresh.dto';
 import { OtpRequestDto, OtpVerifyDto } from './dto/otp.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CurrentUser, AuthenticatedUser } from './current-user.decorator';
@@ -21,6 +22,16 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto, @Ip() ip: string, @Headers('user-agent') userAgent?: string) {
     return this.auth.login(dto, { deviceInfo: userAgent, ip });
+  }
+
+  /**
+   * Deliberately unguarded: it is reached precisely when the access token has
+   * expired, so requiring one would make the endpoint useless.
+   */
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  refresh(@Body() dto: RefreshDto) {
+    return this.auth.refresh((dto.refresh_token ?? dto.refreshToken)!);
   }
 
   @Get('status/:userId')
