@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { MediaModule } from './media/media.module';
+import { BillingModule } from './billing/billing.module';
 import { AdmissionsModule } from './admissions/admissions.module';
 import { AutomationModule } from './automation/automation.module';
 import { CreditModule } from './credit/credit.module';
@@ -19,6 +21,8 @@ import { HealthController } from './health.controller';
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     CreditModule,
+    BillingModule,
+    MediaModule,
     FormsModule,
     AdmissionsModule,
     AutomationModule,

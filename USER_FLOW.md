@@ -7,14 +7,14 @@ These are the flows that exist end-to-end today, verified against the live backe
 ## 1. Student — sign-up, login, and profile onboarding
 
 ```
-Visit /auth/login/student
+Visit /auth/register/student
         │
         ▼
-Enter mobile number (+ full name, if new)
+Enter full name, WhatsApp number (+91 fixed, 10 digits), password
         │
         ▼
-POST /auth/otp/request  ──► WhatsApp OTP sent (mock in dev — code logged server-side)
-        │                    Account auto-created on first request if the phone is new
+POST /auth/register  ──► WhatsApp OTP sent (mock in dev — code logged server-side)
+        │                 Row written, but phoneVerifiedAt null: the account cannot be used yet
         ▼
 Enter the 6-digit code
         │
@@ -25,10 +25,14 @@ POST /auth/otp/verify
         ├─ expired (5 min) ──► must request a new code
         │
         ▼ correct code
-Access + refresh token issued, phone marked verified
+Phone marked verified, access + refresh token issued
         │
         ▼
-Redirect to /student/onboarding (first time) or /student/dashboard (returning)
+Redirect to /student/dashboard
+
+Returning:   /auth/login/student — WhatsApp number + password, no OTP
+Forgotten:   POST /auth/otp/request {PASSWORD_RESET} → verify → reset_token
+             → POST /auth/password/reset → log in normally
         │
         ▼
 10-step onboarding wizard, autosaves every step:
@@ -47,7 +51,10 @@ Redirect to /student/onboarding (first time) or /student/dashboard (returning)
 Dashboard — profile now discoverable
 ```
 
-**Key business rule enforced:** a student can never register or log in with a password — attempting either returns `STUDENT_USES_OTP_LOGIN` pointing back to the OTP flow.
+**Key business rule enforced:** a student account has no email address anywhere — the WhatsApp
+number is the identity. A code is required once, to prove that number at registration; after that
+sign-in is number + password. Logging in before the number is confirmed returns `PHONE_NOT_VERIFIED`
+and sends the student back to the code step, so an abandoned signup can be resumed.
 
 ---
 
@@ -130,12 +137,13 @@ GET /admin/audit-log — full history of every approval/rejection decision
 | Scenario | What happens |
 |---|---|
 | Duplicate email on register | `409 EMAIL_ALREADY_REGISTERED` |
-| Duplicate phone on register/OTP request | `409 PHONE_ALREADY_REGISTERED` |
-| Registering as `STUDENT` via the password endpoint | `400 STUDENT_USES_OTP_LOGIN`, points to the OTP endpoint |
+| Registering a number that already has a confirmed account | `409 PHONE_ALREADY_REGISTERED` |
+| Requesting a code for a number with no student account | `404 USER_NOT_FOUND` |
 | Requesting a second OTP inside 30s | `429 OTP_ALREADY_SENT`, with seconds remaining |
 | Re-using an already-verified OTP code | `400 OTP_INVALID` |
 | 5 wrong OTP attempts in a row | Code invalidated entirely, must request a new one |
-| Student tries password login (even with correct-looking identifier) | `400 STUDENT_USES_OTP_LOGIN`, whether identified by email or phone |
+| Signing in before the registration code is confirmed | `403 PHONE_NOT_VERIFIED`, returns to the code step |
+| Using a password-reset token as a session token | `401 SESSION_EXPIRED` — it carries no `sid` |
 | Uploading the wrong document types | Profile completion correctly stays incomplete until the *actually required* types (per study level) are present |
 
 ---

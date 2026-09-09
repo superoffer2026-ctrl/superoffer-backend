@@ -58,7 +58,8 @@ const PERSONAL: FormSectionDef = {
     field('altMobileCountry', 'Additional mobile country code', 'select', 5, { optionsSource: 'reference:dialCodes' }),
     field('altMobileNumber', 'Additional Mobile Number', 'tel', 6, { placeholder: 'Optional' }),
     field('country', 'Country', 'select', 7, { required: true, optionsSource: 'reference:countries' }),
-    field('city', 'Current City', 'select', 8, { required: true, optionsSource: 'reference:indiaCities' })
+    field('state', 'State', 'select', 8, { required: true, optionsSource: 'reference:indiaStates', allowCustom: true }),
+    field('city', 'Current City', 'select', 9, { required: true, optionsSource: 'reference:indiaCities', allowCustom: true })
   ]
 };
 
@@ -134,7 +135,9 @@ const ACADEMIC: FormSectionDef = {
         item('cgpa', 'CGPA / Percentage', 'text', 5, {
           required: true,
           placeholder: 'e.g. 8.7 CGPA or 85%',
-          visibleWhen: { field: 'level', equals: ALL_LEVELS }
+          visibleWhen: { field: 'level', equals: ALL_LEVELS },
+          /** 11th and 12th are marked as a percentage; there is no CGPA to give. */
+          labelWhen: { field: 'level', equals: SCHOOL_LEVELS, label: 'Percentage', placeholder: 'e.g. 85%' }
         }),
         item('backlogs', 'Number of Backlogs', 'number', 6, {
           required: true,
@@ -317,8 +320,7 @@ const FINANCIAL: FormSectionDef = {
   groups: [
     { key: 'funding', label: 'Education Funding', order: 1 },
     { key: 'background', label: 'Financial Background', order: 2 },
-    { key: 'loan', label: 'Education Loan', order: 3 },
-    { key: 'declaration', label: 'Declaration', order: 4 }
+    { key: 'loan', label: 'Education Loan', order: 3 }
   ],
   description: 'Funding and financial background',
   route: 'financial-information',
@@ -349,20 +351,13 @@ const FINANCIAL: FormSectionDef = {
     }),
     field('currency', 'Currency', 'select', 4, {
       group: 'background', required: true, optionsSource: 'reference:currencyOptions' }),
-    field('employmentCategory', 'Employment category', 'select', 5, {
-      group: 'background',
-      required: true,
-      optionsSource: 'reference:employmentCategoryOptions'
-    }),
-    field('needsLoan', 'Do you need an education loan?', 'select', 6, {
-      group: 'loan', required: true, options: ['yes', 'no'] }),
-    field('declarationAccurate', 'I confirm these details are accurate', 'checkbox', 7, {
-      group: 'declaration', required: true, wide: true }),
-    field('declarationConsent', 'I consent to these details being shared with verified partners', 'checkbox', 8, {
-      group: 'declaration',
-      required: true,
-      wide: true
-    })
+    /**
+     * Employment category and the two declaration checkboxes were removed from
+     * the student wizard: they belong to the lending conversation, and are being
+     * rebuilt inside the bank module rather than asked of every student up front.
+     */
+    field('needsLoan', 'Do you need an education loan?', 'select', 5, {
+      group: 'loan', required: true, options: ['yes', 'no'] })
   ]
 };
 
@@ -387,7 +382,9 @@ const CO_APPLICANT: FormSectionDef = {
   enabled: true,
   groups: [
     { key: 'income', label: 'Financial eligibility', order: 1 },
-    { key: 'identity', label: 'Who they are', order: 2 }
+    { key: 'declaration', label: 'Declaration', order: 2 },
+    /** The CIBIL form: the identity the bureau matches on, asked at the check. */
+    { key: 'identity', label: 'Who they are', order: 3 }
   ],
   fields: [
     field('relationship', 'Who will be financially supporting your education?', 'select', 1, {
@@ -398,8 +395,9 @@ const CO_APPLICANT: FormSectionDef = {
     field('employmentType', 'What is their employment or income type?', 'select', 2, {
       group: 'income',
       required: true,
-      /** Matches the casing FINANCIAL_DOCUMENT_FIELDS.categories keys off, in discovery.service.ts's bank-facing readiness snapshot. */
-      options: ['Salaried', 'Self-Employed', 'Business', 'Other']
+      /** Matches the casing FINANCIAL_DOCUMENT_FIELDS.categories keys off, so this
+       *  answer is what decides which income proofs a lender is shown. */
+      options: ['Salaried', 'Self-Employed', 'Business', 'Agriculture', 'Other']
     }),
     field('monthlyIncome', 'What is their approximate monthly income?', 'number', 3, {
       group: 'income',
@@ -422,32 +420,62 @@ const CO_APPLICANT: FormSectionDef = {
       /** Informational — the step-by-step flow itself skips this question when Q4 is "No". */
       visibleWhen: { field: 'hasExistingLoan', equals: ['Yes'] }
     }),
-    field('loanAmountRequested', 'How much financial assistance are you looking for?', 'number', 6, {
+    /**
+     * Asked before the loan amount, because the two are one question in two
+     * halves: what the family can put in, and what is left to borrow. A lender
+     * reads the margin as commitment, and a student who has never added the two
+     * up tends to overstate what they need.
+     */
+    field('familyContribution', 'How much can your family contribute towards your education?', 'number', 6, {
+      group: 'income',
+      required: true,
+      placeholder: 'e.g. 500000',
+      validation: { min: 0 },
+      helpText: 'Savings, family support or anything already set aside — before any loan.'
+    }),
+    field('loanAmountRequested', 'How much financial assistance are you looking for?', 'number', 7, {
       group: 'income',
       required: true,
       placeholder: 'e.g. 2000000',
       validation: { min: 0 },
       helpText: 'A rough figure is fine — this helps lenders gauge the loan size.'
     }),
-    field('name', 'Parent or Guardian Name', 'text', 7, {
+    field('name', 'Parent or Guardian Name', 'text', 8, {
       group: 'identity',
       required: true,
       placeholder: 'As printed on their PAN card',
       helpText: 'It must match their PAN exactly, or a credit check cannot identify them.'
     }),
-    field('panNumber', 'PAN Number', 'text', 8, {
+    field('panNumber', 'PAN Number', 'text', 9, {
       group: 'identity',
       required: true,
       placeholder: 'ABCDE1234F',
       helpText: 'Stored encrypted. Only the last four characters are ever shown back.',
       validation: { pattern: '^[A-Za-z]{5}[0-9]{4}[A-Za-z]$', message: 'Enter a PAN in the form ABCDE1234F' }
     }),
-    field('dateOfBirth', 'Date of Birth', 'date', 9, { group: 'identity', required: true }),
     field('mobileNumber', 'Mobile Number', 'tel', 10, {
       group: 'identity',
       required: true,
       placeholder: '98765 43210',
-      helpText: 'Used to confirm it is really them before any credit check runs.'
+      helpText: 'The number registered against their PAN.'
+    }),
+    /** The bureau matches on it, and accepts only these two values. */
+    field('gender', 'Gender', 'select', 11, {
+      group: 'identity',
+      required: true,
+      options: ['Male', 'Female']
+    }),
+    /**
+     * Asked here rather than during profile onboarding. Confirming income is
+     * accurate and consenting to share it only means something at the point a
+     * lender is about to read it — up front it was a checkbox on a form the
+     * student was filling in for universities.
+     */
+    field('declarationAccurate', 'I confirm these financial details are accurate', 'checkbox', 12, {
+      group: 'declaration', required: true, wide: true
+    }),
+    field('declarationConsent', 'I consent to these details being shared with verified lending partners', 'checkbox', 13, {
+      group: 'declaration', required: true, wide: true
     })
   ]
 };

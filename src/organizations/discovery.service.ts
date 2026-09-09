@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Organization, OrganizationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { BillingService } from '../billing/billing.service';
 import { assessEligibility } from '../credit/eligibility';
 import { FINANCIAL_DOCUMENT_FIELDS } from '../reference/data/wizard.data';
 
@@ -162,7 +163,105 @@ export interface LoanReadiness {
 
 @Injectable()
 export class DiscoveryService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private billing: BillingService) {}
+
+  /**
+   * The profile as answered, with the empties dropped.
+   *
+   * Every value here was typed by the student. Anything they skipped is absent
+   * rather than defaulted, so a gap on screen is a real gap in the record and
+   * not a rendering accident.
+   */
+  private fullRecord(
+    personal: Record<string, string>,
+    preferences: Record<string, string[]>,
+    academic: Record<string, unknown>,
+    exams: Record<string, unknown>,
+    work: Record<string, unknown>,
+    financial: Record<string, unknown>,
+    projects: Record<string, unknown>
+  ) {
+    const rows = (entries: Array<[string, unknown]>) =>
+      entries
+        .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+        .map(([label, value]) => ({ label, value: Array.isArray(value) ? value.join(', ') : String(value) }));
+
+    const list = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+    const currency = String(financial['currency'] || 'INR');
+
+    return {
+      personal: rows([
+        ['Full name', personal['fullName']],
+        ['Email', personal['email']],
+        ['Mobile', [personal['mobileCountry'], personal['mobileNumber']].filter(Boolean).join(' ')],
+        ['Alternate mobile', [personal['altMobileCountry'], personal['altMobileNumber']].filter(Boolean).join(' ')],
+        ['City', personal['city']],
+        ['State', personal['state']],
+        ['Country', personal['country']]
+      ]),
+      preferences: rows([
+        ['Destinations', preferences['countries']],
+        ['Study level', preferences['studyLevel']],
+        ['Programmes of interest', preferences['fieldOfInterest']],
+        ['Start year', preferences['startYear']],
+        ['Intake', preferences['intake']]
+      ]),
+      /** Every qualification, in the order they were sat. */
+      education: list<Record<string, string>>(academic['history']).map(row => ({
+        level: row['level'] || '',
+        fields: rows([
+          ['Curriculum / Board', row['curriculum']],
+          ['Degree', row['degreeName']],
+          ['Specialisation', row['specialization']],
+          ['Institution', row['institutionName']],
+          ['Score', row['cgpa']],
+          ['Started', row['startedYear']],
+          ['Completed', row['completionYear']],
+          ['Backlogs', row['backlogs']]
+        ])
+      })),
+      educationGap: String(academic['educationGap'] || ''),
+      englishExams: list<Record<string, string>>(exams['englishExams']).map(row => ({
+        exam: row['exam'] || '',
+        fields: rows([['Status', row['status']], ['Score', row['score']]])
+      })),
+      competitiveExams: list<Record<string, string>>(exams['competitiveExams']).map(row => ({
+        exam: row['exam'] || '',
+        fields: rows([['Status', row['status']], ['Score', row['score']]])
+      })),
+      work: {
+        status: String(work['workStatus'] || ''),
+        summary: rows([
+          ['Relevant experience', work['relevantYears'] && `${work['relevantYears']} years`],
+          ['Other experience', work['nonRelevantYears'] && `${work['nonRelevantYears']} years`]
+        ]),
+        roles: list<Record<string, string>>(work['experiences']).map(row => ({
+          role: row['role'] || '',
+          company: row['companyName'] || '',
+          fields: rows([
+            ['Type', row['type']],
+            ['Duration', row['durationMonths'] && `${row['durationMonths']} months`],
+            ['Description', row['description']]
+          ])
+        }))
+      },
+      financial: rows([
+        ['Funding source', financial['fundingSource']],
+        ['Earning members', financial['earningMembers']],
+        ["Father's income", financial['fatherIncome'] && `${currency} ${financial['fatherIncome']}`],
+        ["Mother's income", financial['motherIncome'] && `${currency} ${financial['motherIncome']}`],
+        ["Guardian's income", financial['guardianIncome'] && `${currency} ${financial['guardianIncome']}`],
+        ['Household income', financial['annualHouseholdIncome'] && `${currency} ${financial['annualHouseholdIncome']}`],
+        ['Needs an education loan', financial['needsLoan']]
+      ]),
+      projects: list<Record<string, string>>(projects['projects']).map(row => ({
+        title: row['title'] || '',
+        fields: rows([['Role', row['role']], ['Description', row['description']]])
+      })),
+      achievements: list<string>(projects['achievements']),
+      links: list<string>(projects['links'])
+    };
+  }
 
   private project(
     profile: ProfileWithUser,
@@ -205,7 +304,6 @@ export class DiscoveryService {
     const householdIncome = num(financial['annualHouseholdIncome']);
     const symbol = CURRENCY_SYMBOLS[currency] || '';
     const fundingSource = String(financial['fundingSource'] || '');
-    const employmentCategory = String(financial['employmentCategory'] || '');
     const needsLoan = String(financial['needsLoan'] || '');
 
     const history = (academic['history'] as Array<Record<string, string>>) || [];
@@ -231,7 +329,6 @@ export class DiscoveryService {
       id: profile.userId,
       name,
       initials: name.split(/\s+/).filter(Boolean).map(part => part[0]).join('').slice(0, 2).toUpperCase(),
-      photo: '/intelligent-matching-students.png',
       course,
       country,
       degree,
@@ -252,8 +349,6 @@ export class DiscoveryService {
       gmat: entranceExam.startsWith('GMAT') ? entranceScore : undefined,
       backlogs: num(highest?.['backlogs']),
       workExperienceYears,
-      /** Not collected anywhere in the wizard yet — see docs/10-Open-Decisions.md #10. */
-      visaRefused: false,
       documentsVerified: uploadedDocuments.length,
       examScore: examParts.join(' · ') || 'Not recorded',
       budget: householdIncome ? `${symbol}${householdIncome.toLocaleString('en-IN')}` : 'Not shared',
@@ -265,21 +360,31 @@ export class DiscoveryService {
         : 'Financial details not shared',
       skills: ((projects['achievements'] as string[]) || []).slice(0, 8),
       score,
-      factor: 'Recently submitted',
       scholarshipSeeking: fundingSource === 'Scholarship' || fundingSource === 'Combination of the Above',
       bio: [academic['qualification'], academic['institution'] && `graduate from ${academic['institution']}`, course && `pursuing ${course}`]
         .filter(Boolean)
         .join(', ') || 'Recently submitted student profile.',
       color: CARD_PALETTE[hash % CARD_PALETTE.length],
-      eligible: true,
-      eligibilityNote: 'Manual review pending — recently submitted profile.',
       live: true as const,
       submittedAt: profile.submittedAt?.toISOString() || profile.updatedAt.toISOString(),
+      /**
+       * Everything the student actually answered, section by section.
+       *
+       * The fields above are the card: flattened, first-of-array, shaped for a
+       * list. This is the record itself — the whole education history rather
+       * than the highest CGPA, every exam sitting rather than one string, each
+       * job rather than a total in years. An organisation pays to see a person,
+       * and until now was shown six cells of a nine-step profile.
+       *
+       * Nothing is invented here. A section the student left empty comes back
+       * empty, and the interface says so rather than filling the space.
+       */
+      detail: this.fullRecord(personal, preferences, academic, exams, work, financial, projects),
       needsLoan,
-      employmentCategory,
+      /** Category-specific proofs move with the employment question, into the bank module. */
       financialDocuments:
         needsLoan === 'yes'
-          ? FINANCIAL_DOCUMENT_FIELDS.filter(doc => !doc.categories || !employmentCategory || doc.categories.includes(employmentCategory)).map(
+          ? FINANCIAL_DOCUMENT_FIELDS.filter(doc => !doc.categories).map(
               doc => ({ key: doc.key, label: doc.label, uploaded: uploadedDocuments.includes(doc.label) })
             )
           : undefined,
@@ -308,6 +413,13 @@ export class DiscoveryService {
     };
   }
 
+  /** The availability slot this viewer recruits against, if it recruits at all. */
+  private availabilityFilter(organization: Organization) {
+    if (organization.organizationType === 'UNIVERSITY') return { admissionStatus: 'OPEN' };
+    if (organization.organizationType === 'BANK') return { financeStatus: 'OPEN' };
+    return {};
+  }
+
   /**
    * Only SUBMITTED profiles are discoverable. Filtering happens in memory because
    * the profile lives in JSON columns; move the hot filters into SQL (or a
@@ -318,7 +430,19 @@ export class DiscoveryService {
       /** A student is visible only once submitted, and only while their own
        *  discovery toggle is on. */
       /* Alumni are already admitted, so they are nobody's candidate. */
-      where: { status: 'SUBMITTED', discoverable: true, segment: { not: 'ALUMNI' } },
+      where: {
+        status: 'SUBMITTED',
+        discoverable: true,
+        segment: { not: 'ALUMNI' },
+        /**
+         * Each side of the market sees only the students it can still serve. A
+         * bank pays per candidate, so a student who has already arranged their
+         * funding must stop appearing to other banks — while remaining visible
+         * to universities, because they still need a place. The reverse holds
+         * for a student who has accepted an offer but not yet found the money.
+         */
+        ...this.availabilityFilter(organization)
+      },
       include: { user: true },
       orderBy: { submittedAt: 'desc' }
     });
@@ -530,13 +654,45 @@ export class DiscoveryService {
       where: { userId: studentUserId },
       include: { user: true }
     });
-    if (!profile || profile.status !== 'SUBMITTED' || !profile.discoverable || profile.segment === 'ALUMNI') {
+    /**
+     * The same availability rule as search, applied again here: this route takes
+     * an id, so without it a bank could still open a student it can no longer
+     * serve simply by holding a link to them.
+     *
+     * Except for whoever they are already dealing with. An accepted offer is the
+     * start of the work, not the end of it — visas, documents and start dates all
+     * come after — so an organisation that holds a live offer with this student
+     * keeps access to them. Closing the market must not lock a university out of
+     * the student it just admitted.
+     */
+    const dealing = await this.prisma.offer.count({
+      where: {
+        studentUserId,
+        organizationId: organization.id,
+        status: { notIn: ['WITHDRAWN', 'EXPIRED'] }
+      }
+    });
+
+    const slot = this.availabilityFilter(organization) as { admissionStatus?: string; financeStatus?: string };
+    const closed =
+      !dealing &&
+      ((slot.admissionStatus && profile?.admissionStatus !== 'OPEN') ||
+        (slot.financeStatus && profile?.financeStatus !== 'OPEN'));
+
+    if (!profile || profile.status !== 'SUBMITTED' || !profile.discoverable || profile.segment === 'ALUMNI' || closed) {
       throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: 'No discoverable student found for that id' });
     }
     const offers = await this.prisma.offer.findMany({
       where: { studentUserId, status: { notIn: ['WITHDRAWN', 'EXPIRED'] } },
       include: { organization: true }
     });
+    /**
+     * Opening a profile is what an organisation pays for, so this is where the
+     * quota is spent. Counted once per student per billing period — a second
+     * look at the same person costs nothing.
+     */
+    await this.billing.recordProfileView(organization.id, studentUserId);
+
     const documents = await this.documentsByStudent([studentUserId]);
     const uploaded = documents.get(studentUserId) || [];
     return this.project(

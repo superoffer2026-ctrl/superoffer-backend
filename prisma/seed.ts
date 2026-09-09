@@ -20,7 +20,7 @@ const prisma = new PrismaClient();
  * supplied — this file is public, so a password written here is a published
  * credential for whatever it is run against.
  */
-const PASSWORD = process.env.SEED_PASSWORD || 'Password123';
+const PASSWORD = process.env.SEED_PASSWORD || 'Password123!';
 
 if (!process.env.SEED_PASSWORD && process.env.NODE_ENV === 'production') {
   console.error(
@@ -40,10 +40,14 @@ async function seedOrganization(input: {
   officerName: string;
   officerRole: 'UNIVERSITY_OFFICER' | 'LOAN_OFFICER';
 }) {
-  const existing = await prisma.user.findUnique({ where: { email: input.officerEmail }, include: { organization: true } });
-  if (existing?.organization) return existing.organization;
-
   const passwordHash = await bcrypt.hash(PASSWORD, 12);
+  const existing = await prisma.user.findUnique({ where: { email: input.officerEmail }, include: { organization: true } });
+  if (existing?.organization) {
+    /** Re-seeding refreshes the credential, so the password printed below is the one that works. */
+    await prisma.user.update({ where: { id: existing.id }, data: { passwordHash } });
+    return existing.organization;
+  }
+
   const organization = await prisma.organization.create({
     data: {
       name: input.name,
@@ -72,26 +76,26 @@ async function seedOrganization(input: {
   return organization;
 }
 
-async function seedStudent(input: { email: string; phone: string; fullName: string; submitted: boolean }) {
+/** Students hold no email: the WhatsApp number is the account. `phoneVerifiedAt`
+ *  is stamped so a seeded student can sign in without walking the OTP step. */
+async function seedStudent(input: { contactEmail: string; phone: string; fullName: string; submitted: boolean }) {
   const passwordHash = await bcrypt.hash(PASSWORD, 12);
   const existing = await prisma.user.findUnique({ where: { phone: input.phone }, include: { studentProfile: true } });
   if (existing) {
-    /** Re-running after the switch to password login backfills credentials on older rows. */
+    /** Re-running after the switch to WhatsApp identity clears any address left on older rows. */
     return prisma.user.update({
       where: { id: existing.id },
-      data: { email: input.email, passwordHash, emailVerifiedAt: new Date() },
+      data: { email: null, emailVerifiedAt: null, passwordHash, phoneVerifiedAt: new Date() },
       include: { studentProfile: true }
     });
   }
 
   return prisma.user.create({
     data: {
-      email: input.email,
       passwordHash,
       phone: input.phone,
       fullName: input.fullName,
       role: 'STUDENT',
-      emailVerifiedAt: new Date(),
       phoneVerifiedAt: new Date(),
       studentProfile: {
         create: input.submitted
@@ -100,7 +104,8 @@ async function seedStudent(input: { email: string; phone: string; fullName: stri
               submittedAt: new Date(),
               personal: {
                 fullName: input.fullName,
-                email: input.email,
+                /** A contact detail on the profile that organisations use — not a sign-in credential. */
+                email: input.contactEmail,
                 mobileCountry: 'IN',
                 mobileNumber: input.phone.replace('+91', ''),
                 country: 'India',
@@ -150,10 +155,7 @@ async function seedStudent(input: { email: string; phone: string; fullName: stri
                 motherIncome: '800000',
                 annualHouseholdIncome: '1800000',
                 currency: 'INR',
-                employmentCategory: 'Salaried',
-                needsLoan: 'yes',
-                declarationAccurate: true,
-                declarationConsent: true
+                needsLoan: 'yes'
               },
               projects: {
                 projects: [{ title: 'Student success prediction model', role: 'Developer', description: 'ML model predicting student outcomes.' }],
@@ -195,8 +197,8 @@ async function main() {
     officerRole: 'LOAN_OFFICER'
   });
 
-  const student = await seedStudent({ email: 'aarav@example.com', phone: '+919876543210', fullName: 'Aarav Mehta', submitted: true });
-  await seedStudent({ email: 'student@example.com', phone: '+919876500000', fullName: 'New Student', submitted: false });
+  const student = await seedStudent({ contactEmail: 'aarav@example.com', phone: '+919876543210', fullName: 'Aarav Mehta', submitted: true });
+  await seedStudent({ contactEmail: 'student@example.com', phone: '+919876500000', fullName: 'New Student', submitted: false });
 
   /** One live offer so the student wallet and the organization pipeline aren't empty. */
   /**
@@ -249,8 +251,8 @@ Seed complete.
 
   University officer   officer@northbridge.edu     / ${PASSWORD}
   Loan officer         officer@edufund.example     / ${PASSWORD}
-  Student (submitted)  aarav@example.com           / ${PASSWORD}
-  Student (fresh)      student@example.com         / ${PASSWORD}
+  Student (submitted)  +919876543210               / ${PASSWORD}
+  Student (fresh)      +919876500000               / ${PASSWORD}
   Admin key            value of ADMIN_APPROVAL_KEY in .env
 `);
 }

@@ -7,6 +7,7 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import type { Organization } from '@prisma/client';
 import { CreditService } from './credit.service';
+import { CreditCheckDto } from './dto/credit-check.dto';
 import { assessEligibility } from './eligibility';
 
 /** The wording a co-applicant agrees to. Kept with the consent, verbatim. */
@@ -57,7 +58,13 @@ export class StudentCreditController {
 
     return {
       coApplicant,
-      check: check && { band: check.band, outcome: check.outcome, pulledAt: check.pulledAt, staleAfter: check.staleAfter },
+      check: check && {
+        score: check.score,
+        band: check.band,
+        outcome: check.outcome,
+        pulledAt: check.pulledAt,
+        staleAfter: check.staleAfter
+      },
       eligibility: assessEligibility({
         monthlyIncome: Number(coApplicant?.monthlyIncome) || 0,
         existingEmi: Number(coApplicant?.existingEmi) || 0,
@@ -112,11 +119,49 @@ export class StudentCreditController {
     return this.credit.revokeConsent(user.id, id);
   }
 
-  /** Runs the soft check the co-applicant has agreed to. */
+  /**
+   * The CIBIL check: one call that records the consent and runs the look-up.
+   *
+   * The form carries the identity because it is where the student confirms it —
+   * the details are saved to the co-applicant first, so the same answers stand
+   * behind the consent, the audit row and the request to the bureau rather than
+   * three copies that could drift.
+   *
+   * What comes back is the score and the reason for anything else. The PAN
+   * returns masked and SurePass is never named to the browser.
+   */
   @Post('credit-check')
   @HttpCode(HttpStatus.OK)
-  check(@CurrentUser() user: AuthenticatedUser) {
-    return this.credit.runCheck(user.id, 'SELF_PULL', { actorUserId: user.id });
+  async check(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreditCheckDto,
+    @Req() request: { ip?: string }
+  ) {
+    await this.credit.saveCoApplicant(user.id, {
+      name: dto.fullName,
+      panNumber: dto.panNumber,
+      mobileNumber: dto.mobileNumber,
+      gender: dto.gender
+    });
+
+    await this.credit.grantConsent(user.id, {
+      kind: 'SELF_PULL',
+      purpose: 'Show which education loans this family is likely to qualify for',
+      statement: SELF_STATEMENT,
+      ip: request.ip
+    });
+
+    const check = await this.credit.runCheck(user.id, 'SELF_PULL', { actorUserId: user.id });
+
+    return {
+      outcome: check.outcome,
+      score: check.score ?? null,
+      band: check.band ?? null,
+      pulledAt: check.pulledAt,
+      staleAfter: check.staleAfter,
+      reused: check.reused,
+      detail: 'detail' in check ? check.detail : undefined
+    };
   }
 }
 

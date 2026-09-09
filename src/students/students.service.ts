@@ -44,6 +44,34 @@ const SECTION_COLUMN: Record<string, string> = {
   projectsAchievements: 'projects'
 };
 
+/**
+ * What each wizard step is worth towards a complete profile.
+ *
+ * Sections are not equally informative. An admission turns on academic history;
+ * a profile with only Projects filled in tells a university almost nothing. And
+ * counting every section the same made the number wrong in the other direction
+ * too — the Documents item is satisfied by default until a study level requires
+ * any, so a student who had answered nothing was shown 11%.
+ *
+ * The eight wizard steps carry the whole hundred between them. Anything not
+ * listed is still tracked and still shown as outstanding; it just does not move
+ * the percentage. The total is summed rather than assumed, so these stay
+ * readable relative weights and a full profile always lands on exactly 100.
+ */
+const SECTION_WEIGHTS: Record<string, number> = {
+  personalInformation: 15,
+  studyPreferences: 15,
+  /** The single largest: it is what an offer is actually decided on. */
+  academicInformation: 20,
+  englishExam: 10,
+  competitiveExam: 10,
+  workExperience: 10,
+  financialInformation: 12,
+  projectsAchievements: 8
+};
+
+const TOTAL_WEIGHT = Object.values(SECTION_WEIGHTS).reduce((sum, weight) => sum + weight, 0);
+
 @Injectable()
 export class StudentsService {
   constructor(private prisma: PrismaService) {}
@@ -55,9 +83,63 @@ export class StudentsService {
   }
 
   async getMyProfile(userId: string) {
-    const profile = await this.getOrCreateProfile(userId);
+    const profile = await this.seedPersonalFromAccount(await this.getOrCreateProfile(userId), userId);
     const documents = await this.prisma.studentDocument.findMany({ where: { userId }, orderBy: { uploadedAt: 'desc' } });
     return { ...profile, documents };
+  }
+
+  /**
+   * Step 1 opens with the name and number already in it.
+   *
+   * Both were given at registration, so asking again is asking the same question
+   * twice — and a student who retypes their number by hand can mistype it into
+   * something that no longer matches the account they sign in with.
+   *
+   * It is written into the section rather than merged at read time so it behaves
+   * like any other saved answer: it can be edited, and an edit sticks. The guard
+   * is that the section is still completely untouched, so this fires once, on
+   * the first read after signing up, and never overwrites anything a student
+   * has typed — including a field they deliberately cleared.
+   */
+  private async seedPersonalFromAccount<T extends { personal: unknown }>(profile: T, userId: string): Promise<T> {
+    if (Object.keys((profile.personal as Record<string, unknown>) || {}).length) return profile;
+
+    const account = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true, phone: true }
+    });
+
+    const fullName = account?.fullName?.trim() || '';
+    /** Students are +91 by registration, so the last ten digits are the national number. */
+    const digits = (account?.phone || '').replace(/\D/g, '').slice(-10);
+    if (!fullName && digits.length !== 10) return profile;
+
+    const personal = {
+      ...(fullName ? { fullName } : {}),
+      ...(digits.length === 10
+        ? {
+            mobileCountry: 'IN',
+            mobileNumber: digits,
+            mobileKey: this.mobileKeyOf('IN', digits),
+            phone: `+91 ${digits}`,
+            /**
+             * Registration fixes the dial code at +91, so the country is already
+             * known. It matters beyond saving a click: the city control only
+             * becomes a dropdown once a country with a known city list is
+             * chosen, so leaving this blank left every student typing their city
+             * into a disabled box. Changing the country clears the city, so a
+             * student living elsewhere is not stuck with it.
+             */
+            country: 'India'
+          }
+        : {})
+    };
+
+    const updated = await this.prisma.studentProfile.update({
+      where: { userId },
+      data: { personal: personal as Prisma.InputJsonValue }
+    });
+    return { ...profile, ...updated };
   }
 
   /** Merges the onboarding wizard's whole-form payload (everything except `financial`, which has its own endpoint). */
@@ -164,13 +246,20 @@ export class StudentsService {
   }
 
   /**
-   * An MBBS-only destination forces the study level to MBBS — the wizard applies
-   * this client-side, and it is re-applied here so the rule holds for any caller.
+   * An MBBS-only destination forces both study answers to MBBS.
+   *
+   * These countries admit Indian students to nothing else, so a stored
+   * "Masters in Data Science in Georgia" is a preference no university on the
+   * platform could ever answer — and it would still reach discovery and be
+   * matched on. The wizard narrows both dropdowns client-side; this re-applies
+   * the rule so it holds for any caller, including one posting straight at the
+   * API or a profile saved before the country was added to the list.
    */
   saveStudyPreferences(userId: string, dto: StudyPreferencesDto) {
     const mbbsOnly = dto.countries.some(country => MBBS_ONLY_COUNTRIES.includes(country));
     const studyLevel = mbbsOnly ? ['MBBS'] : dto.studyLevel;
-    return this.writeSection(userId, 'studyPreferences', { ...dto, studyLevel });
+    const fieldOfInterest = mbbsOnly ? ['MBBS'] : dto.fieldOfInterest;
+    return this.writeSection(userId, 'studyPreferences', { ...dto, studyLevel, fieldOfInterest });
   }
 
   /**
@@ -246,16 +335,10 @@ export class StudentsService {
   }
 
   /**
-   * Income is required for each declared earner, the household total is recomputed
-   * from those incomes, and both declarations must be accepted.
+   * Income is required for each declared earner, and the household total is
+   * recomputed from those incomes.
    */
   saveFinancialInformation(userId: string, dto: FinancialInformationDto) {
-    if (!dto.declarationAccurate || !dto.declarationConsent) {
-      throw new BadRequestException({
-        code: 'VALIDATION_ERROR',
-        message: 'Both declarations must be accepted before the financial section can be saved'
-      });
-    }
 
     const incomes: Record<string, string> = {};
     for (const earner of EARNING_MEMBER_OPTIONS) {
@@ -347,6 +430,7 @@ export class StudentsService {
     const exams = (profile.entranceExams as Record<string, unknown>) || {};
     const work = (profile.workExperience as Record<string, unknown>) || {};
     const financial = (profile.financial as Record<string, unknown>) || {};
+    const coApplicant = (profile.coApplicant as Record<string, unknown>) || {};
     const projects = (profile.projects as Record<string, unknown>) || {};
 
     const requiredDocs = REQUIRED_DOCUMENTS[profile.studyLevel || ''] || [];
@@ -355,7 +439,7 @@ export class StudentsService {
       {
         key: 'personalInformation',
         label: 'Personal Information',
-        done: Boolean(personal['fullName'] && personal['email'] && personal['mobileNumber'] && personal['country'] && personal['city'])
+        done: Boolean(personal['fullName'] && personal['email'] && personal['mobileNumber'] && personal['country'] && personal['state'] && personal['city'])
       },
       {
         key: 'studyPreferences',
@@ -373,7 +457,7 @@ export class StudentsService {
       {
         key: 'financialInformation',
         label: 'Financial Information',
-        done: Boolean(financial['fundingSource'] && financial['currency'] && financial['employmentCategory'] && financial['needsLoan'])
+        done: Boolean(financial['fundingSource'] && financial['currency'] && financial['needsLoan'])
       },
       { key: 'projectsAchievements', label: 'Projects & Achievements', done: Array.isArray(projects['projects']) },
       /** Documents are only gated once the older onboarding flow has set a study level. */
@@ -384,16 +468,25 @@ export class StudentsService {
       }
     ];
 
-    const doneCount = checklist.filter(item => item.done).length;
+    /** Each step reports what it is worth, so a screen can say "+15%" beside it. */
+    const weighted = checklist.map(item => ({ ...item, weight: SECTION_WEIGHTS[item.key] ?? 0 }));
+    const earned = weighted.reduce((sum, item) => sum + (item.done ? item.weight : 0), 0);
 
     /**
      * Which verification documents a lender needs from this student, and which of
-     * them are in. The list depends on the employment category they declared, so
-     * it is resolved here rather than rebuilt by every screen that shows it.
+     * them are in. Resolved here rather than rebuilt by every screen that shows it.
+     *
+     * The category-specific proofs are keyed to how the co-applicant earns, which
+     * the loan application asks — so until that question is answered, only the
+     * documents every applicant needs are requested. Asking for salary slips
+     * *and* an agricultural income certificate of one household would be asking
+     * for paperwork that cannot all exist.
      */
-    const employmentCategory = String(financial['employmentCategory'] || '');
+    const employmentType = String(coApplicant['employmentType'] || '');
     const loanDocumentFields = String(financial['needsLoan'] || '') === 'yes'
-      ? FINANCIAL_DOCUMENT_FIELDS.filter(doc => !doc.categories || !employmentCategory || doc.categories.includes(employmentCategory))
+      ? FINANCIAL_DOCUMENT_FIELDS.filter(
+          doc => !doc.categories || (!!employmentType && doc.categories.includes(employmentType))
+        )
       : [];
     const loanDocuments = loanDocumentFields.map(doc => ({
       key: doc.key,
@@ -402,13 +495,13 @@ export class StudentsService {
     }));
 
     return {
-      completionPercent: Math.round((doneCount / checklist.length) * 100),
+      completionPercent: Math.round((earned / TOTAL_WEIGHT) * 100),
       status: profile.status,
-      sections: checklist,
-      missing: checklist.filter(item => !item.done).map(item => item.label),
+      sections: weighted,
+      missing: weighted.filter(item => !item.done).map(item => item.label),
       loanDocuments: {
         needsLoan: String(financial['needsLoan'] || ''),
-        employmentCategory,
+        employmentType,
         required: loanDocuments,
         complete: loanDocuments.length > 0 && loanDocuments.every(doc => doc.uploaded)
       }

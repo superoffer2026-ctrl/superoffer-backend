@@ -12,6 +12,11 @@ import { PrismaService } from '../prisma/prisma.service';
 export class ApprovedOrganizationGuard implements CanActivate {
   constructor(private prisma: PrismaService) {}
 
+  /** The one thing a suspended organisation may still read: its own bill. */
+  private isBillingRoute(request: { url?: string }): boolean {
+    return (request.url || '').includes('/organizations/me/billing');
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const userId = request.user?.id;
@@ -26,6 +31,21 @@ export class ApprovedOrganizationGuard implements CanActivate {
         code: 'ORGANIZATION_NOT_APPROVED',
         message: 'Your organization is still being reviewed by the SuperOffer admin team',
         approval_status: user.organization.verificationStatus
+      });
+    }
+
+    /**
+     * A suspension is an admin's decision, never an automatic consequence of an
+     * unpaid invoice — but once taken it has to bite, or it is only a label.
+     * Billing itself stays reachable, so a suspended customer can still see what
+     * they owe and what to pay; everything else is closed.
+     */
+    if (user.organization.suspendedAt && !this.isBillingRoute(request)) {
+      throw new ForbiddenException({
+        code: 'ORGANIZATION_SUSPENDED',
+        message:
+          user.organization.suspensionReason ||
+          'Your organisation account is suspended. Please contact the SuperOffer team.'
       });
     }
 

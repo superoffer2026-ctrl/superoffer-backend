@@ -5,19 +5,19 @@ import { BureauCredentialService } from './bureau-credential.service';
 import { OrganizationCreditController, StudentCreditController } from './credit.controller';
 import { CreditService } from './credit.service';
 import { FileSecretStore } from './secret-store';
-import { StubBureauProvider } from './stub-bureau.provider';
+import { SurePassProvider } from './surepass.provider';
 
 /**
  * The co-applicant, the consent that permits a credit look-up, and the look-up
  * itself.
  *
- * The provider is bound here rather than in the service, so swapping the stub
- * for a real connector is one line and touches nothing else.
+ * The provider is bound here rather than in the service, so the connector can be
+ * replaced without touching the consent, audit or eligibility code around it.
  */
 @Module({
   imports: [FormsModule],
   controllers: [StudentCreditController, OrganizationCreditController, BureauCredentialController],
-  providers: [CreditService, StubBureauProvider, BureauCredentialService, FileSecretStore],
+  providers: [CreditService, SurePassProvider, BureauCredentialService, FileSecretStore],
   exports: [CreditService]
 })
 export class CreditModule {}

@@ -3,8 +3,8 @@
  *
  * The provider is behind an interface because the entitlement question — whose
  * bureau membership a pull runs under — is a commercial arrangement, not a code
- * decision. A stub, a consumer self-pull and a bank-credentialled pull all fit
- * the same shape, so the rest of the product does not change when that settles.
+ * decision. A consumer self-pull and a bank-credentialled pull fit the same
+ * shape, so the rest of the product does not change when that settles.
  */
 
 export type CreditCheckKind = 'SELF_PULL' | 'LENDER_PULL';
@@ -14,13 +14,14 @@ export type EnquiryType = 'SOFT' | 'HARD';
 
 export type CreditOutcome = 'SCORED' | 'NO_HISTORY' | 'IDENTITY_MISMATCH' | 'PROVIDER_ERROR';
 
-/** Exactly what a bureau needs to identify a person, and nothing more. */
+/** Exactly what the bureau needs to identify a person, and nothing more. */
 export interface CreditSubject {
   name: string;
   /** Decrypted only for the moment of the call, never returned to a browser. */
   pan: string;
-  dateOfBirth: string;
   mobileNumber: string;
+  /** SurePass matches on it; the only values it accepts. */
+  gender: 'male' | 'female';
 }
 
 export interface CreditPullRequest {
@@ -39,6 +40,11 @@ export interface CreditPullRequest {
 
 export interface CreditPullResult {
   outcome: CreditOutcome;
+  /**
+   * The score itself, 300-900. Shown to the co-applicant about their own record,
+   * which is theirs to see; organisations are given the band instead.
+   */
+  score?: number;
   /** A band such as "750-799". Absent unless the outcome is SCORED. */
   band?: string;
   enquiry: EnquiryType;

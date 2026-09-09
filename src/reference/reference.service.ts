@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { OptionSetsService } from '../forms/option-sets.service';
-import { COUNTRIES, INDIA_CITIES } from './data/geo.data';
+import { CITIES_BY_STATE, COUNTRIES, INDIA_CITIES, INDIA_STATES } from './data/geo.data';
 import {
   BANK_EVALUATION_MODE_OPTIONS,
   OFFER_CONDITION_PRESETS,
@@ -25,7 +25,6 @@ import {
   ACHIEVEMENT_SUGGESTIONS,
   CURRENCY_OPTIONS,
   EARNING_MEMBER_OPTIONS,
-  EMPLOYMENT_CATEGORY_OPTIONS,
   EMPLOYMENT_TYPES,
   FINANCIAL_DOCUMENT_FIELDS,
   FUNDING_SOURCE_OPTIONS,
@@ -55,7 +54,16 @@ export class ReferenceService {
   }
 
   geo() {
-    return { countries: COUNTRIES, indiaCities: this.list('indiaCities', INDIA_CITIES) };
+    return {
+      countries: COUNTRIES,
+      indiaStates: this.list('indiaStates', INDIA_STATES),
+      /**
+       * The whole flat list stays, because it is what an answer is validated
+       * against; `citiesByState` is what the form narrows the dropdown with.
+       */
+      indiaCities: this.list('indiaCities', INDIA_CITIES),
+      citiesByState: CITIES_BY_STATE
+    };
   }
 
   studyPreferences() {
@@ -94,7 +102,6 @@ export class ReferenceService {
   financialInformation() {
     return {
       fundingSourceOptions: this.list('fundingSourceOptions', FUNDING_SOURCE_OPTIONS),
-      employmentCategoryOptions: this.list('employmentCategoryOptions', EMPLOYMENT_CATEGORY_OPTIONS),
       earningMemberOptions: this.list('earningMemberOptions', EARNING_MEMBER_OPTIONS),
       currencyOptions: this.list('currencyOptions', CURRENCY_OPTIONS),
       financialDocumentFields: FINANCIAL_DOCUMENT_FIELDS

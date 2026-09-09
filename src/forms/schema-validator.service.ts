@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { COUNTRIES, INDIA_CITIES } from '../reference/data/geo.data';
+import { COUNTRIES, INDIA_CITIES, INDIA_STATES } from '../reference/data/geo.data';
 import {
   COMPETITIVE_EXAM_OPTIONS,
   CURRICULUM_OPTIONS,
@@ -17,7 +17,6 @@ import {
 import {
   CURRENCY_OPTIONS,
   EARNING_MEMBER_OPTIONS,
-  EMPLOYMENT_CATEGORY_OPTIONS,
   EMPLOYMENT_TYPES,
   FUNDING_SOURCE_OPTIONS,
   QUALIFICATION_OPTIONS
@@ -34,6 +33,7 @@ import { OptionSetsService } from './option-sets.service';
 const OPTION_SOURCES: Record<string, readonly string[]> = {
   countries: COUNTRIES.map(country => country.name),
   dialCodes: COUNTRIES.map(country => country.iso2),
+  indiaStates: INDIA_STATES,
   indiaCities: INDIA_CITIES,
   studyCountries: STUDY_COUNTRIES,
   fieldsOfStudy: FIELDS_OF_STUDY,
@@ -51,8 +51,7 @@ const OPTION_SOURCES: Record<string, readonly string[]> = {
   employmentTypes: EMPLOYMENT_TYPES,
   fundingSourceOptions: FUNDING_SOURCE_OPTIONS,
   earningMemberOptions: EARNING_MEMBER_OPTIONS,
-  currencyOptions: CURRENCY_OPTIONS,
-  employmentCategoryOptions: EMPLOYMENT_CATEGORY_OPTIONS
+  currencyOptions: CURRENCY_OPTIONS
 };
 
 const isBlank = (value: unknown) =>
@@ -96,6 +95,14 @@ export class SchemaValidatorService {
    * the next time that student edited an unrelated field in the same section.
    */
   private allowedFor(field: FormFieldDef, previous?: unknown): readonly string[] | undefined {
+    /**
+     * `allowCustom` makes the list suggestions rather than the whole world: a
+     * student whose city or college is not on it must still be able to name it.
+     * Turning the check off here rather than at each branch means it holds for
+     * every type that consults a list — the wizard already offered a free-text
+     * university this way, and the server was rejecting it.
+     */
+    if (field.allowCustom) return undefined;
     const options = this.optionsFor(field);
     if (!options) return undefined;
     const held = this.valuesIn(previous);
@@ -267,15 +274,30 @@ export class SchemaValidatorService {
         if (!rowField.enabled) continue;
         if (!this.isVisible(rowField, row)) continue;
 
+        /** Worded for this row, so the message matches the label the student saw. */
+        const asked = this.labelledFor(rowField, row);
         const cell = row[rowField.key];
         if (isBlank(cell)) {
-          if (rowField.required) errors.push(`${where} — ${rowField.label} is required`);
+          if (asked.required) errors.push(`${where} — ${asked.label} is required`);
           continue;
         }
-        errors.push(...this.checkValue(rowField, cell).map(problem => `${where} — ${problem}`));
+        errors.push(...this.checkValue(asked, cell).map(problem => `${where} — ${problem}`));
       }
     });
     return errors;
+  }
+
+  /** The field as this row asks it, with any `labelWhen` override applied. */
+  private labelledFor(field: FormFieldDef, row: Record<string, unknown>): FormFieldDef {
+    const rule = field.labelWhen;
+    if (!rule) return field;
+    const actual = row[rule.field];
+    const wanted = rule.equals || [];
+    const matches = Array.isArray(actual)
+      ? actual.some(entry => wanted.includes(String(entry)))
+      : wanted.includes(String(actual));
+    if (!matches) return field;
+    return { ...field, label: rule.label, ...(rule.placeholder ? { placeholder: rule.placeholder } : {}) };
   }
 
   /** Whether a field's `visibleWhen` condition is satisfied by the payload. */

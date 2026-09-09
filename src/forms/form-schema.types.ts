@@ -67,6 +67,16 @@ export interface FormFieldDef {
   optionsSource?: string;
   validation?: FieldValidation;
   visibleWhen?: VisibilityRule;
+  /**
+   * Renames the field when the row it sits in says so.
+   *
+   * A school row's score is a percentage and nothing else; only a degree row's
+   * can be a CGPA. Asking both under one label makes the wrong question of one
+   * of them. This keeps a single field and a single stored key, and words the
+   * question for the row it is in — so the wizard's label and the server's
+   * "... is required" message stay the same sentence.
+   */
+  labelWhen?: VisibilityRule & { label: string; placeholder?: string };
   composite?: CompositeKind;
   /**
    * For a composite: the fields of one row, so its contents are data an admin
@@ -201,7 +211,6 @@ export const ENGINE_DEPENDENCIES: EngineDependency[] = [
     usedBy: ['Household-income filter', 'Financial need score', 'Required-loan filter']
   },
   { section: 'financialInformation', field: 'currency', usedBy: ['Income display', 'Completion'] },
-  { section: 'financialInformation', field: 'employmentCategory', usedBy: ['Loan document checklist', 'Completion'] },
   { section: 'financialInformation', field: 'needsLoan', usedBy: ['Loan document checklist', 'Required-loan filter', 'Completion'] },
 
   { section: 'projectsAchievements', field: 'projects', usedBy: ['Completion'] },

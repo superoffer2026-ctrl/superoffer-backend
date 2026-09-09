@@ -223,21 +223,63 @@ export const COUNTRIES: CountryInfo[] = COUNTRY_TABLE.trim()
 export const COUNTRY_NAMES: string[] = COUNTRIES.map(country => country.name);
 
 /**
- * City options currently exist for India only; every other country falls back to a
- * free-text input in the wizard, so this list is a convenience rather than a
- * closed validation set.
+ * The 28 states.
+ *
+ * Union territories are deliberately absent: the dropdown is a shortcut for the
+ * answer almost every student gives, and eight territories that almost none of
+ * them live in only make the list longer to scan. `state` is `allowCustom`, so a
+ * student in Delhi or Puducherry types it and it saves like any other answer.
  */
-export const INDIA_CITIES: string[] = [
-  'Agra', 'Ahmedabad', 'Ajmer', 'Aligarh', 'Allahabad (Prayagraj)', 'Amravati', 'Amritsar', 'Aurangabad',
-  'Bareilly', 'Belgaum', 'Bengaluru', 'Bhavnagar', 'Bhilai', 'Bhopal', 'Bhubaneswar', 'Bikaner',
-  'Chandigarh', 'Chennai', 'Coimbatore', 'Cuttack', 'Dehradun', 'Delhi', 'Dhanbad', 'Durgapur',
-  'Erode', 'Faridabad', 'Firozabad', 'Ghaziabad', 'Goa', 'Gorakhpur', 'Guntur', 'Gurugram', 'Guwahati',
-  'Gwalior', 'Howrah', 'Hubli-Dharwad', 'Hyderabad', 'Indore', 'Jabalpur', 'Jaipur', 'Jalandhar',
-  'Jammu', 'Jamnagar', 'Jamshedpur', 'Jhansi', 'Jodhpur', 'Kakinada', 'Kalyan-Dombivli', 'Kanpur',
-  'Kochi', 'Kolhapur', 'Kolkata', 'Kollam', 'Kota', 'Kozhikode', 'Kurnool', 'Lucknow', 'Ludhiana',
-  'Madurai', 'Mangaluru', 'Meerut', 'Moradabad', 'Mumbai', 'Mysuru', 'Nagpur', 'Nanded', 'Nashik',
-  'Navi Mumbai', 'Nellore', 'Noida', 'Patna', 'Puducherry', 'Pune', 'Raipur', 'Rajahmundry', 'Rajkot',
-  'Ranchi', 'Rourkela', 'Salem', 'Sangli', 'Shimla', 'Siliguri', 'Solapur', 'Srinagar', 'Surat',
-  'Thane', 'Thiruvananthapuram', 'Thrissur', 'Tiruchirappalli', 'Tirunelveli', 'Tirupati', 'Tiruppur',
-  'Udaipur', 'Ujjain', 'Vadodara', 'Varanasi', 'Vasai-Virar', 'Vijayawada', 'Visakhapatnam', 'Warangal'
+export const INDIA_STATES: string[] = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
+  'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
+  'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan',
+  'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal'
+].sort((a, b) => a.localeCompare(b));
+
+/** Tamil Nadu, down to municipality level. */
+const TAMIL_NADU_CITIES: string[] = [
+  'Adirampattinam', 'Alandur', 'Ambasamudram', 'Ambattur', 'Ambur', 'Arakkonam', 'Arani',
+  'Aranthangi', 'Arcot', 'Ariyalur', 'Aruppukottai', 'Attur', 'Avadi', 'Bhavani', 'Bodinayakanur',
+  'Chengalpattu', 'Chennai', 'Chidambaram', 'Chinnamanur', 'Coimbatore', 'Colachel', 'Coonoor',
+  'Cuddalore', 'Cumbum', 'Devakottai', 'Dharapuram', 'Dharmapuri', 'Dindigul', 'Erode', 'Gudalur',
+  'Gudiyatham', 'Hosur', 'Kallakurichi', 'Kanchipuram', 'Kanyakumari', 'Karaikudi', 'Karur',
+  'Katpadi', 'Kayalpattinam', 'Keelakarai', 'Kodaikanal', 'Kovilpatti', 'Krishnagiri',
+  'Kumbakonam', 'Kuzhithurai', 'Madurai', 'Madurantakam', 'Mannargudi', 'Marthandam',
+  'Mayiladuthurai', 'Melur', 'Mettupalayam', 'Mettur', 'Musiri', 'Nagapattinam', 'Nagercoil',
+  'Namakkal', 'Nandivaram-Guduvancheri', 'Neyveli', 'Oddanchatram', 'Ooty / Udhagamandalam',
+  'Palani', 'Palladam', 'Pallapatti', 'Pallavaram', 'Panruti', 'Paramakudi', 'Pattukkottai',
+  'Perambalur', 'Periyakulam', 'Pernampattu', 'Pollachi', 'Ponneri', 'Poonamallee', 'Pudukkottai',
+  'Pugalur', 'Puliangudi', 'Punjaipuliampatti', 'Rajapalayam', 'Ramanathapuram', 'Rameswaram',
+  'Ranipet', 'Rasipuram', 'Salem', 'Sankarankoil', 'Sathiyamangalam', 'Sattur', 'Sengottai',
+  'Sholingur', 'Sirkali', 'Sivaganga', 'Sivakasi', 'Srivilliputhur', 'Surandai', 'Tambaram',
+  'Tenkasi', 'Thanjavur', 'Theni', 'Thiruchengode', 'Thirumangalam', 'Thirunindravur',
+  'Thirupathur', 'Thiruthani', 'Thiruthuraipoondi', 'Thiruvarur', 'Thiruvathipuram',
+  'Thiruverkadu', 'Thoothukudi', 'Thuraiyur', 'Thuvakudi', 'Tindivanam', 'Tiruchendur',
+  'Tiruchirappalli', 'Tirukovilur', 'Tirunelveli', 'Tiruppur', 'Tiruvallur', 'Tiruvannamalai',
+  'Udumalaipettai', 'Ulundurpettai', 'Usilampatti', 'Vadalur', 'Valparai', 'Vandavasi',
+  'Vaniyambadi', 'Vedaranyam', 'Vellakovil', 'Vellore', 'Vikramasingapuram', 'Villupuram',
+  'Virudhachalam', 'Virudhunagar'
 ];
+
+/**
+ * City suggestions exist for Tamil Nadu alone.
+ *
+ * SuperOffer's students are almost all here, and a half-built list for the other
+ * 35 states is worse than none: it offers a handful of big cities, misses the
+ * town the student actually lives in, and reads as though their answer is not
+ * allowed. Everywhere else the field stays free text, which `allowCustom` on
+ * the schema already permits and validation already accepts.
+ *
+ * Uniqueness is enforced here rather than trusted of the list above: a name
+ * repeated in it would otherwise show twice in one dropdown, and two students in
+ * the same place would record different rows.
+ */
+export const CITIES_BY_STATE: Record<string, string[]> = {
+  'Tamil Nadu': [...new Set(TAMIL_NADU_CITIES.map(city => city.trim()))].sort((a, b) => a.localeCompare(b))
+};
+
+/** What an answer is validated against, kept in step with what the form offers. */
+export const INDIA_CITIES: string[] = [
+  ...new Set(Object.values(CITIES_BY_STATE).flat())
+].sort((a, b) => a.localeCompare(b));
