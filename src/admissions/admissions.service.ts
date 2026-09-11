@@ -369,15 +369,16 @@ export class AdmissionsService {
       }),
       /*
        * The account is kept so the offer's foreign key survives, but nothing
-       * about the person does. Email and phone are unique, so they are made
-       * unusable rather than null — a released address could be re-registered
-       * and silently inherit this history.
+       * about the person does. The WhatsApp number is a student's identity, so
+       * it is made unusable rather than null — releasing it would let the same
+       * number be re-registered and silently inherit this history. The marker
+       * can never match PHONE_PATTERN, so no sign-in or OTP lookup can reach it.
        */
       this.prisma.user.update({
         where: { id: userId },
         data: {
-          email: `purged.${marker}@removed.invalid`,
-          phone: null,
+          email: null,
+          phone: `purged.${marker}`,
           fullName: 'Data removed',
           passwordHash: null,
           status: 'DELETED',

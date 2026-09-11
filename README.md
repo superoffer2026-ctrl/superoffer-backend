@@ -19,7 +19,7 @@ This README describes what **actually exists today**. Check
 | Database | **PostgreSQL** |
 | ORM | **Prisma 5** |
 | Auth | JWT access + refresh, sessions persisted in Postgres |
-| Student login | Phone + OTP, delivered over WhatsApp |
+| Student login | WhatsApp number (+91, 10 digits) + password. A WhatsApp OTP proves the number once at registration, and again to reset a forgotten password. |
 | Validation | `class-validator` DTOs via a global `ValidationPipe` |
 | API style | REST, versioned under `/api/v1` |
 | API docs | Swagger UI at `/api-docs` |
@@ -80,10 +80,10 @@ Seven tables, defined in `prisma/schema.prisma`:
 
 | Table | Purpose |
 |---|---|
-| `users` | Auth only. Institutions use email+password; students use phone+OTP. Carries `role`, `status`, lockout counters. |
+| `users` | Auth only. Institutions use email+password; students use their WhatsApp number (`phone`) + password and hold no email at all. Carries `role`, `status`, lockout counters. |
 | `organizations` | One row per registering university / bank. `verificationStatus` gates login. |
 | `auth_sessions` | Hashed refresh tokens — enables revocation and "sign out other devices". |
-| `otp_codes` | Student login OTPs. Hashed, attempt-counted, expiring. |
+| `otp_codes` | Student OTPs (`REGISTER` / `PASSWORD_RESET`). Hashed, attempt-counted, expiring. |
 | `audit_log` | Append-only trail of Super Admin approvals and rejections. |
 | `student_profiles` | The wizard's form groups stored as JSON columns, mirroring the UI's shape so no field-mapping layer is needed. |
 | `student_documents` | File metadata; bytes live on disk/object storage, not in the database. |
@@ -104,7 +104,8 @@ Copy `.env.example` to `.env` and fill it in.
 | `CORS_ORIGIN` | no | Comma-separated; defaults to `http://localhost:4200` |
 | `ACCESS_TOKEN_TTL_SECONDS` | no | Default 3600 |
 | `REFRESH_TOKEN_TTL_SECONDS` | no | Default 2592000 (30 days) |
-| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | no | **Leave unset in development** — the sender falls back to a mock that logs the OTP instead of sending it |
+| `GALLABOX_API_KEY`, `GALLABOX_API_SECRET`, `GALLABOX_CHANNEL_ID` | no | Production WhatsApp sender; set all three to go live |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | no | Meta sender, the fallback. **Leave every sender unset in development** — it falls back to a mock that logs the OTP instead of sending it |
 
 ---
 
@@ -132,7 +133,7 @@ Build for production with `npm run build` (emits `dist/`), then `npm start`.
 
 | Mount | Endpoints |
 |---|---|
-| `/auth` | `POST /register`, `POST /login`, `GET /status/:userId`, `POST /otp/request`, `POST /otp/verify`, `GET /me` |
+| `/auth` | `POST /register`, `POST /login`, `GET /status/:userId`, `POST /otp/request`, `POST /otp/verify`, `POST /password/reset`, `GET /me` |
 | `/students/me` | `GET`, `GET /completion`, `GET /offers`, `PUT`, `PUT /financial`, `POST /submit` |
 | `/students/me/documents` | `GET`, `POST`, `PUT /:id`, `GET /:id/preview`, `DELETE /:id` |
 | `/admin` | `GET /registrations`, `PATCH /users/:userId/approval`, `GET /audit-log` |

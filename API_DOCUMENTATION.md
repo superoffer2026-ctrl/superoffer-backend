@@ -10,29 +10,61 @@ All request/response examples below are taken from live test runs against a real
 
 ## Authentication
 
-**Every role signs in with email + password.** Institution roles
-(`UNIVERSITY_OFFICER`, `LOAN_OFFICER`, `CONSULTANT`) are additionally gated behind Super Admin
-approval; students can sign in as soon as they register.
+**Students sign in with their WhatsApp number + password; institutions with email + password.**
+A student account holds no email address at all — the number on `users.phone` is the identity, and
+the signup form neither asks for nor stores one. The dial code is fixed at **+91**: the form takes
+the 10 national digits, and the API normalises `9876543210`, `+91 98765-43210`, `919876543210` and
+`09876543210` to the one stored form `+919876543210`, so a student is one account however they type
+it. An institution officer's `phone` is an optional contact detail and stays a general international
+number.
 
-The WhatsApp OTP endpoints below still exist and still work — they are the planned student
-sign-in method once a WhatsApp API is available, but nothing uses them today.
+**Passwords** — register, password reset and change password alike, for every role — must be 8-64
+characters with an uppercase letter, a lowercase letter, a number and a special character. Institution roles (`UNIVERSITY_OFFICER`,
+`LOAN_OFFICER`, `CONSULTANT`) are additionally gated behind Super Admin approval.
+
+The three student flows:
+
+| Flow | Steps |
+|---|---|
+| Register | `POST /auth/register` (name, phone, password) → code sent → `POST /auth/otp/verify` → signed in |
+| Log in | `POST /auth/login` with the number and password. No OTP. |
+| Forgot password | `POST /auth/otp/request` (`PASSWORD_RESET`) → `POST /auth/otp/verify` → `reset_token` → `POST /auth/password/reset` → log in normally |
+
+Registration writes the user row before the number is proven, but leaves `phoneVerifiedAt` null and
+`/auth/login` refuses such an account with `PHONE_NOT_VERIFIED`, so an unconfirmed signup can be
+resumed rather than being a dead end.
 
 Authenticated requests use `Authorization: Bearer <access_token>`.
 
 ### `POST /auth/register`
 Registers a student, or an institution officer together with their organization.
 
-Students send `role: "STUDENT"` and **omit** `organization`; they get `approval_status: "APPROVED"`
-and can log in immediately. Institution roles must include `organization` and always start
-`PENDING` — login is blocked until a Super Admin approves them.
+Students send `role: "STUDENT"` with `fullName`, `phone` and `password`, and **omit** both
+`organization` and `email` — an address sent here is ignored and never stored. The response
+is not a session: a WhatsApp code goes out and `POST /auth/otp/verify` completes the registration.
+Institution roles must include `organization` and `email`, and always start `PENDING` — login is
+blocked until a Super Admin approves them.
 
 ```json
-// Request — student
+// Request — student ("phone" may be sent as the bare 10 digits)
 {
-  "email": "aarav@example.com",
-  "password": "Password123",
   "fullName": "Aarav Mehta",
+  "phone": "9876543210",
+  "password": "Str0ng@Pass",
   "role": "STUDENT"
+}
+```
+```json
+// 201 Created — student (no tokens; confirm the code next)
+{
+  "user_id": "28740324-3d19-4e52-bd90-2ca60fe96616",
+  "role": "STUDENT",
+  "phone": "+919876543210",
+  "otp_required": true,
+  "can_login": false,
+  "otp_sent": true,
+  "purpose": "REGISTER",
+  "expires_in_seconds": 300
 }
 ```
 
@@ -43,7 +75,7 @@ and can log in immediately. Institution roles must include `organization` and al
 // Request
 {
   "email": "uni.officer@northbridge.edu",
-  "password": "password123",
+  "password": "Str0ng@Pass",
   "phone": "+14165550001",
   "fullName": "Maya Chen",
   "role": "UNIVERSITY_OFFICER",
@@ -73,14 +105,15 @@ and can log in immediately. Institution roles must include `organization` and al
 | Institution role without organization details | 400 | `ORGANIZATION_REQUIRED` |
 | Email already registered | 409 | `EMAIL_ALREADY_REGISTERED` |
 | Phone already registered | 409 | `PHONE_ALREADY_REGISTERED` |
-| Bad email/weak password | 400 | class-validator message |
+| Bad email, weak password, or a student number that is not 10 digits | 400 | class-validator message |
 
 ### `POST /auth/login`
-Password login for every role. `identifier` accepts an email (or a phone number).
+Password login for every role. `identifier` is a student's WhatsApp number, or an institution's
+email address; numbers are normalised, so `+91 98765-43210` and `+919876543210` are one account.
 
 ```json
 // Request
-{ "identifier": "uni.officer@northbridge.edu", "password": "password123" }
+{ "identifier": "uni.officer@northbridge.edu", "password": "Str0ng@Pass" }
 ```
 ```json
 // 200 OK
@@ -107,7 +140,8 @@ Password login for every role. `identifier` accepts an email (or a phone number)
 
 | Error | Status | Code |
 |---|---|---|
-| Wrong email/password | 401 | `INVALID_CREDENTIALS` |
+| Wrong identifier/password | 401 | `INVALID_CREDENTIALS` |
+| Student never confirmed their number | 403 | `PHONE_NOT_VERIFIED` (includes `phone`; send them back to the OTP step) |
 | 5 failed attempts in a row | 423 | `ACCOUNT_LOCKED` (`retry_after_seconds` in body, 900s lock) |
 | Organization still pending | 403 | `ACCOUNT_PENDING_APPROVAL` |
 | Organization rejected | 403 | `ACCOUNT_REJECTED` (includes the reviewer's reason) |
@@ -115,29 +149,36 @@ Password login for every role. `identifier` accepts an email (or a phone number)
 Failed-attempt counters and lockouts are persisted in Postgres on the `users` row — they survive a server restart.
 
 ### `POST /auth/otp/request`
-Student login/registration, step 1. Creates the student account on first use. Sends a 6-digit code over WhatsApp (mock sender in development — the code is logged to the server console instead of being delivered).
+Sends a 6-digit code over WhatsApp to a number that **already has a student account** — this endpoint
+does not create accounts. `purpose` is `REGISTER` (resume an unconfirmed signup) or `PASSWORD_RESET`
+(default). In development the mock sender logs the code to the server console instead of delivering it.
 
 ```json
 // Request
-{ "phone": "+919876543210", "fullName": "Priya Nair" }
+{ "phone": "9876543210", "purpose": "PASSWORD_RESET" }
 ```
 ```json
 // 200 OK
-{ "user_id": "5759e3dd-dd9b-4c84-af5f-dcd32223edac", "phone": "+919876543210", "otp_sent": true, "expires_in_seconds": 300 }
+{ "user_id": "5759e3dd-dd9b-4c84-af5f-dcd32223edac", "phone": "+919876543210", "otp_sent": true, "purpose": "PASSWORD_RESET", "expires_in_seconds": 300 }
 ```
 
 | Error | Status | Code |
 |---|---|---|
 | Malformed phone number | 400 | `VALIDATION_ERROR` |
-| Phone belongs to a non-student account | 409 | `PHONE_ALREADY_REGISTERED` |
+| No student account for that number | 404 | `USER_NOT_FOUND` |
 | Requested again inside the cooldown window | 429 | `OTP_ALREADY_SENT` (`retry_after_seconds`, 30s cooldown) |
 
 ### `POST /auth/otp/verify`
-Student login/registration, step 2. On success, issues the same token pair as password login.
+Confirms a code. What comes back depends on what the code was for.
+
+A `REGISTER` code finishes the signup and issues the same token pair as password login (shown below).
+A `PASSWORD_RESET` code returns `{ "verified": true, "purpose": "PASSWORD_RESET", "reset_token": "…",
+"expires_in_seconds": 600 }` instead — deliberately **not** a session. The reset token carries no
+`sid`, so `JwtStrategy` rejects it on any authenticated route; its only use is `POST /auth/password/reset`.
 
 ```json
 // Request
-{ "phone": "+919876543210", "code": "344035" }
+{ "phone": "9876543210", "code": "344035" }
 ```
 ```json
 // 200 OK
@@ -160,6 +201,26 @@ Student login/registration, step 2. On success, issues the same token pair as pa
 | Code expired (5 min TTL) | 400 | `OTP_EXPIRED` |
 | Wrong code | 400 | `OTP_INVALID` (invalidated entirely after 5 wrong attempts) |
 | No account for this phone | 404 | `USER_NOT_FOUND` |
+
+### `POST /auth/password/reset`
+Closes the forgotten-password loop, using the `reset_token` from a `PASSWORD_RESET` verification.
+It sets the password and stops there — no session is issued, so the student signs in through
+`/auth/login` exactly as on any other day. Every existing session for that account is revoked,
+because a reset exists to lock somebody out.
+
+```json
+// Request
+{ "resetToken": "eyJhbGciOiJIUzI1NiIs...", "password": "Rot@ted789" }
+```
+```json
+// 200 OK
+{ "reset": true }
+```
+
+| Error | Status | Code |
+|---|---|---|
+| Weak password | 400 | class-validator message |
+| Token expired (10 min TTL), malformed, or not a reset token | 401 | `RESET_TOKEN_INVALID` |
 
 ### `GET /auth/status/:userId`
 Public registration-status lookup (e.g. for a "your application is under review" page).
@@ -423,7 +484,7 @@ All document endpoints verify the document belongs to the requesting student (`4
 
 ## Notes for the next phase
 
-- **WhatsApp OTP is built but not in use.** `/auth/otp/request` and `/auth/otp/verify` work, backed by a mock sender that logs the code instead of messaging a phone. A production `MetaWhatsAppSender` is implemented and wired — switching is just setting `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID`. To make it the student sign-in method again, point the frontend auth page at those two endpoints; the backend needs no change. Swapping to an email-based OTP would mean adding an `EmailSender` alongside the existing `WhatsAppSender` interface.
+- **WhatsApp delivery is provider-agnostic.** Every sender implements the one `WhatsAppSender` interface in `src/auth/whatsapp-sender.ts`, and `AuthModule` picks one from configuration alone: Gallabox when `GALLABOX_API_KEY` / `GALLABOX_API_SECRET` / `GALLABOX_CHANNEL_ID` are set, Meta when `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` are, and otherwise a mock that logs the code to the console — which is what local development runs on. Going live with Gallabox is filling in those three variables plus the approved template name; no call site changes. If Gallabox's request contract differs from what is coded, `GallaboxWhatsAppSender.buildPayload` is the single place to correct.
 - Discovery filtering runs in memory over submitted profiles, because the profile lives in JSON columns. Move the hot filters into SQL (or a projection table) once the student count outgrows a page of results.
 - Offer expiry is applied lazily on read. A scheduled job would be better once one exists.
 - Not yet built: notifications, subscriptions/billing, reports & analytics beyond the workspace's own aggregates, and the AI-matching service. The organization workspace renders these from local demo data today.

@@ -41,9 +41,12 @@ enum StudyLevel {
 
 model User {
   id                  String          @id @default(uuid())
-  /// Every role signs in with email+password. `phone` is optional and is also the
-  /// lookup key for the WhatsApp OTP flow, which is built but not currently used.
+  /// Institutions and admins sign in with email+password. Students never have one:
+  /// they are identified by `phone`, the WhatsApp number that receives their OTP,
+  /// and the student signup form neither asks for nor stores an address.
   email               String?         @unique
+  /// Required in practice for students (enforced in AuthService, since the column
+  /// is shared with institutions where it is an optional contact detail).
   phone               String?         @unique
   passwordHash        String?
   fullName            String?
@@ -126,10 +129,10 @@ model AuthSession {
   @@map("auth_sessions")
 }
 
-/// Student login OTPs, delivered over WhatsApp. Built and working, but not the
-/// current sign-in path — see API_DOCUMENTATION.md. purpose is always LOGIN today;
-/// kept as a string (not enum) so EMAIL_VERIFY/PHONE_VERIFY/LOGIN_MFA can be
-/// added later for institution MFA without a migration.
+/// Student OTPs, delivered over WhatsApp. `purpose` is REGISTER (confirming a
+/// number at signup, which signs the student in) or PASSWORD_RESET (which only
+/// unlocks the set-a-new-password step). Kept as a string rather than an enum so
+/// further purposes cost no migration.
 model OtpCode {
   id         String    @id @default(uuid())
   phone      String

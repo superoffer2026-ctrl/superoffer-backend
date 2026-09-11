@@ -7,3 +7,6 @@ uploads/
 # Bank bureau certificates. Encrypted at rest, but material like this never
 # belongs in version control under any circumstances.
 .secrets/
+
+# OTP codes written by the mock WhatsApp sender in development.
+.dev-otp.log
