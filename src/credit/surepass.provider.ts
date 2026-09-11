@@ -1,7 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CreditBureauProvider, CreditPullRequest, CreditPullResult, bandFor } from './credit.types';
 
+/**
+ * Sandbox unless SUREPASS_BASE_URL says otherwise. Going live is the same
+ * contract behind a different host, so it is configuration and not code:
+ * set SUREPASS_BASE_URL to the production host and SUREPASS_TOKEN to the
+ * production token, and redeploy.
+ */
 const DEFAULT_BASE_URL = 'https://sandbox.surepass.app';
 const SCORE_PATH = '/api/v1/credit-report-cibil/score';
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -23,11 +29,24 @@ const MAX_SCORE = 900;
  * succeeded, and a student is owed a reason they can act on.
  */
 @Injectable()
-export class SurePassProvider implements CreditBureauProvider {
+export class SurePassProvider implements CreditBureauProvider, OnModuleInit {
   readonly name = 'surepass';
   private readonly logger = new Logger(SurePassProvider.name);
 
   constructor(private config: ConfigService) {}
+
+  /**
+   * Says at boot which bureau host this deployment talks to and whether it can
+   * talk at all — the host and a yes/no, never the token. A deploy pointed at
+   * the wrong environment, or one that forgot the token, shows up in the first
+   * lines of the log rather than in a student's failed check.
+   */
+  onModuleInit() {
+    const host = this.baseUrl;
+    const stage = host === DEFAULT_BASE_URL ? 'sandbox' : 'custom host';
+    const credentials = this.token ? 'token configured' : 'NO TOKEN — credit checks will fail until SUREPASS_TOKEN is set';
+    this.logger.log(`Credit bureau: SurePass ${stage} (${host}), ${credentials}`);
+  }
 
   /** Sandbox today; the live host is the same contract behind a different base URL. */
   private get baseUrl(): string {

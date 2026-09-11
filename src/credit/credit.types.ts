@@ -61,6 +61,14 @@ export interface CreditBureauProvider {
 }
 
 /**
+ * What `CreditService` asks for. It is bound to a concrete connector in
+ * `CreditModule` and nowhere else, so the bureau behind a look-up — sandbox,
+ * live, or a stub in a test — is a module-level decision, not a code change
+ * in the consent, audit or eligibility logic that surrounds it.
+ */
+export const CREDIT_BUREAU = 'CREDIT_BUREAU';
+
+/**
  * The bands a score is reported in.
  *
  * Discovery shows a band rather than a number: it is all an officer needs to

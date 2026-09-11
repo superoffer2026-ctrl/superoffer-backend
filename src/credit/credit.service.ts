@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { decryptField, encryptField, isEncrypted, isIndividualPan, isPanFormat, maskPan } from '../common/field-crypto';
-import { SurePassProvider } from './surepass.provider';
 import {
   BAND_FRESH_DAYS,
   CONSENT_VALID_DAYS,
+  CREDIT_BUREAU,
+  CreditBureauProvider,
   CreditCheckKind,
   CreditSubject
 } from './credit.types';
@@ -24,7 +25,7 @@ const days = (n: number) => n * 24 * 60 * 60 * 1000;
 export class CreditService {
   private readonly logger = new Logger(CreditService.name);
 
-  constructor(private prisma: PrismaService, private bureau: SurePassProvider) {}
+  constructor(private prisma: PrismaService, @Inject(CREDIT_BUREAU) private bureau: CreditBureauProvider) {}
 
   // ── The co-applicant ──────────────────────────────────────────────────────
 

@@ -4,6 +4,7 @@ import { BureauCredentialController } from './bureau-credential.controller';
 import { BureauCredentialService } from './bureau-credential.service';
 import { OrganizationCreditController, StudentCreditController } from './credit.controller';
 import { CreditService } from './credit.service';
+import { CREDIT_BUREAU } from './credit.types';
 import { FileSecretStore } from './secret-store';
 import { SurePassProvider } from './surepass.provider';
 
@@ -17,7 +18,13 @@ import { SurePassProvider } from './surepass.provider';
 @Module({
   imports: [FormsModule],
   controllers: [StudentCreditController, OrganizationCreditController, BureauCredentialController],
-  providers: [CreditService, SurePassProvider, BureauCredentialService, FileSecretStore],
+  providers: [
+    CreditService,
+    /** SurePass in every environment; sandbox and live differ only by SUREPASS_BASE_URL and SUREPASS_TOKEN. */
+    { provide: CREDIT_BUREAU, useClass: SurePassProvider },
+    BureauCredentialService,
+    FileSecretStore
+  ],
   exports: [CreditService]
 })
 export class CreditModule {}

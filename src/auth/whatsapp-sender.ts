@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -132,4 +134,61 @@ export class GallaboxWhatsAppSender implements WhatsAppSender {
     }
     return { provider: 'gallabox', messageId: payload?.id || payload?.messageId };
   }
+}
+
+/**
+ * Picks the sender for this deployment from configuration alone.
+ *
+ * Precedence: Gallabox when all three of its credentials are present, then Meta
+ * when its two are, otherwise the mock. Every credential comes from the
+ * environment and none has a default, so going live is filling in the
+ * variables and redeploying — the auth flow is the same object either way.
+ *
+ * The choice is logged at boot, by name only. In production the mock is a loud
+ * warning rather than an error: it keeps a half-configured deploy bootable
+ * while Gallabox is still being integrated, but nobody should find out that
+ * codes were only being logged by way of a student who never received one.
+ */
+export function resolveWhatsAppSender(config: ConfigService, logger = new Logger('WhatsAppSender')): WhatsAppSender {
+  const read = (key: string) => (config.get<string>(key) || '').trim();
+
+  const gallaboxApiKey = read('GALLABOX_API_KEY');
+  const gallaboxApiSecret = read('GALLABOX_API_SECRET');
+  const gallaboxChannelId = read('GALLABOX_CHANNEL_ID');
+  if (gallaboxApiKey && gallaboxApiSecret && gallaboxChannelId) {
+    const sender = new GallaboxWhatsAppSender({
+      apiKey: gallaboxApiKey,
+      apiSecret: gallaboxApiSecret,
+      channelId: gallaboxChannelId,
+      templateName: read('GALLABOX_OTP_TEMPLATE_NAME') || undefined,
+      bodyVariableName: read('GALLABOX_OTP_BODY_VARIABLE') || undefined,
+      baseUrl: read('GALLABOX_BASE_URL') || undefined
+    });
+    logger.log(`WhatsApp OTP sender: Gallabox (template "${read('GALLABOX_OTP_TEMPLATE_NAME') || 'otp_login'}")`);
+    return sender;
+  }
+  if (gallaboxApiKey || gallaboxApiSecret || gallaboxChannelId) {
+    logger.warn('Gallabox is only partly configured (needs GALLABOX_API_KEY, GALLABOX_API_SECRET and GALLABOX_CHANNEL_ID); ignoring it');
+  }
+
+  const accessToken = read('WHATSAPP_ACCESS_TOKEN');
+  const phoneNumberId = read('WHATSAPP_PHONE_NUMBER_ID');
+  if (accessToken && phoneNumberId) {
+    const sender = new MetaWhatsAppSender({
+      accessToken,
+      phoneNumberId,
+      apiVersion: read('WHATSAPP_API_VERSION') || undefined,
+      templateName: read('WHATSAPP_OTP_TEMPLATE_NAME') || undefined,
+      languageCode: read('WHATSAPP_OTP_TEMPLATE_LANGUAGE') || undefined
+    });
+    logger.log('WhatsApp OTP sender: Meta Cloud API');
+    return sender;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    logger.warn('WhatsApp OTP sender: MOCK — no provider configured, so OTP codes are logged, not delivered. Set the GALLABOX_* variables to go live.');
+  } else {
+    logger.log('WhatsApp OTP sender: mock (codes are written to .dev-otp.log)');
+  }
+  return new MockWhatsAppSender();
 }

@@ -104,8 +104,10 @@ Copy `.env.example` to `.env` and fill it in.
 | `CORS_ORIGIN` | no | Comma-separated; defaults to `http://localhost:4200` |
 | `ACCESS_TOKEN_TTL_SECONDS` | no | Default 3600 |
 | `REFRESH_TOKEN_TTL_SECONDS` | no | Default 2592000 (30 days) |
-| `GALLABOX_API_KEY`, `GALLABOX_API_SECRET`, `GALLABOX_CHANNEL_ID` | no | Production WhatsApp sender; set all three to go live |
-| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | no | Meta sender, the fallback. **Leave every sender unset in development** — it falls back to a mock that logs the OTP instead of sending it |
+| `GALLABOX_API_KEY`, `GALLABOX_API_SECRET`, `GALLABOX_CHANNEL_ID` | no | Production WhatsApp sender; set all three to go live. `GALLABOX_OTP_TEMPLATE_NAME` / `GALLABOX_OTP_BODY_VARIABLE` / `GALLABOX_BASE_URL` default to `otp_login` / `otp` / `https://server.gallabox.com` |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | no | Meta sender, the fallback. **Leave every sender unset in development** — it falls back to a mock that logs the OTP instead of sending it. The chosen sender is logged at boot |
+| `SUREPASS_TOKEN` | for credit checks | SurePass bearer token. Unset → every CIBIL check returns `PROVIDER_ERROR` with a friendly message; the boot log says so |
+| `SUREPASS_BASE_URL` | no | Defaults to the sandbox host. **Going live is configuration only:** set this to the production host and `SUREPASS_TOKEN` to the production token, then redeploy |
 
 ---
 
