@@ -8,6 +8,9 @@ import { CreateOfferDto, OfferFlagsDto } from './dto/offer.dto';
 const DEFAULT_RESPONSE_WINDOW_DAYS = 14;
 
 /** Once an offer reaches one of these, nothing may change it again. */
+import { availabilityFieldFor, availabilityFrom } from './marketplace-availability';
+import { LocalMediaStorage } from '../media/media.storage';
+
 const TERMINAL_STATUSES: OfferStatus[] = ['ACCEPTED', 'REJECTED', 'WITHDRAWN', 'EXPIRED'];
 
 const DECISION_TO_STATUS: Record<string, OfferStatus> = {
@@ -19,6 +22,21 @@ const DEFAULT_CATEGORY_BY_ORG_TYPE: Record<string, OfferCategory> = {
   UNIVERSITY: 'UNIVERSITY',
   BANK: 'BANK',
   CONSULTANCY: 'CONSULTANCY'
+};
+
+/**
+ * What each kind of organisation is allowed to send.
+ *
+ * A university offers a place and may attach a scholarship to it; a bank offers
+ * money. Neither can send the other's, and the category is not a free choice
+ * from the client — it decides which market the student leaves when they accept,
+ * so a university sending a BANK offer would close their funding rather than
+ * their admission, and hide them from the wrong half of the platform.
+ */
+const CATEGORIES_BY_ORG_TYPE: Record<string, OfferCategory[]> = {
+  UNIVERSITY: ['UNIVERSITY', 'SCHOLARSHIP'],
+  BANK: ['BANK'],
+  CONSULTANCY: ['CONSULTANCY']
 };
 
 /** A file arriving with a message, already written to disk by the interceptor. */
@@ -71,7 +89,11 @@ const initialsOf = (name: string) =>
 
 @Injectable()
 export class OffersService {
-  constructor(private prisma: PrismaService, private automation: AutomationService) {}
+  constructor(
+    private prisma: PrismaService,
+    private automation: AutomationService,
+    private media: LocalMediaStorage
+  ) {}
 
   /**
    * Serialises an offer into exactly the shape the student wallet renders, so the
@@ -88,6 +110,12 @@ export class OffersService {
       institution: offer.organization.name,
       initial: initialsOf(offer.organization.name),
       institutionWebsite: offer.organization.website || '',
+      /**
+       * The university and programme as they were when this was sent, not as they
+       * are now. Everything a student needs to compare one offer against another
+       * without opening a prospectus.
+       */
+      snapshot: (offer.programSnapshot as Record<string, unknown>) || {},
       institutionDescription: offer.organization.description || '',
       program: offer.program,
       headline: offer.headline,
@@ -337,6 +365,30 @@ export class OffersService {
     return this.toStudentOffer(updated);
   }
 
+  /**
+   * Recomputes one market's availability from every offer the student holds in
+   * it, and touches nothing else.
+   *
+   * Reading the offers back rather than flipping a flag is what keeps the two
+   * markets independent and makes withdrawal safe: a student with two accepted
+   * places does not become available again because one was withdrawn.
+   */
+  private async refreshAvailability(studentUserId: string, category: OfferCategory) {
+    const field = availabilityFieldFor(category);
+    /** A scholarship or consultancy offer fills neither slot. */
+    if (!field) return;
+
+    const offers = await this.prisma.offer.findMany({
+      where: { studentUserId },
+      select: { category: true, studentDecision: true, status: true }
+    });
+
+    await this.prisma.studentProfile.updateMany({
+      where: { userId: studentUserId },
+      data: { [field]: availabilityFrom(offers, field) }
+    });
+  }
+
   async decide(studentUserId: string, offerId: string, decision: string) {
     const offer = await this.findOwnedByStudent(studentUserId, offerId);
     if (TERMINAL_STATUSES.includes(offer.status)) {
@@ -356,6 +408,9 @@ export class OffersService {
       },
       include: { organization: true, messages: true, student: true }
     });
+
+    /** Accepting a place closes that market; rejecting one reopens it. */
+    await this.refreshAvailability(studentUserId, updated.category);
 
     /** One event per decision, so an admin can word each one differently. */
     const decided = decision.toLowerCase();
@@ -481,12 +536,65 @@ export class OffersService {
       });
     }
 
+    /**
+     * The university and programme, copied as they stand right now.
+     *
+     * An offer is a promise made on a date. Referencing the live programme would
+     * let next year's tuition rewrite what a student was already promised — after
+     * they had read it, compared it and possibly accepted it. So the figures are
+     * taken once, here, and never move again.
+     */
+    const source = dto.productId
+      ? await this.prisma.organizationProduct.findFirst({
+          where: { id: dto.productId, organizationId: organization.id }
+        })
+      : null;
+
+    const programSnapshot = {
+      capturedAt: new Date().toISOString(),
+      university: {
+        name: organization.name,
+        city: organization.city,
+        country: organization.country,
+        website: organization.website,
+        logoUrl: this.media.urlFor(organization.logoRef),
+        coverUrl: this.media.urlFor(organization.coverRef)
+      },
+      program: source
+        ? {
+            name: source.name,
+            degreeLevel: source.degreeLevel,
+            fieldOfStudy: source.fieldOfStudy,
+            durationMonths: source.durationMonths,
+            studyMode: source.studyMode,
+            campusLocation: source.campusLocation,
+            intakes: source.intakes,
+            /** Minor units in the row, a decimal string at the edge. */
+            tuitionFee: source.tuitionFeeMinor === null ? null : (source.tuitionFeeMinor / 100).toFixed(2),
+            currency: source.currency,
+            scholarshipInfo: source.scholarshipInfo,
+            imageUrl: this.media.urlFor(source.imageRef),
+            url: source.url
+          }
+        : null
+    };
+
+    const allowed = CATEGORIES_BY_ORG_TYPE[organization.organizationType] || [];
+    const category = (dto.category as OfferCategory) || DEFAULT_CATEGORY_BY_ORG_TYPE[organization.organizationType];
+    if (!allowed.includes(category)) {
+      throw new BadRequestException({
+        code: 'CATEGORY_NOT_ALLOWED',
+        message: `A ${organization.organizationType.toLowerCase()} can only send ${allowed.join(' or ').toLowerCase()} offers.`
+      });
+    }
+
     const windowDays = dto.responseWindowDays || DEFAULT_RESPONSE_WINDOW_DAYS;
     const offer = await this.prisma.offer.create({
       data: {
         organizationId: organization.id,
         studentUserId: dto.studentUserId,
-        category: (dto.category as OfferCategory) || DEFAULT_CATEGORY_BY_ORG_TYPE[organization.organizationType],
+        category,
+        programSnapshot: programSnapshot as Prisma.InputJsonValue,
         program: dto.program,
         headline: dto.headline,
         description: dto.description,
@@ -625,6 +733,9 @@ export class OffersService {
       data: { status: 'WITHDRAWN', withdrawnAt: new Date() },
       include: { organization: true, messages: true, student: true }
     });
+
+    /** A withdrawn offer places nobody, so that market may be open again. */
+    await this.refreshAvailability(updated.studentUserId, updated.category);
 
     await this.automation.run('offer.withdrawn', { offer: updated, actor: 'organization', triggerRef: 'withdrawn' });
     return this.toOrganizationOffer(await this.findOwnedByOrganization(organizationId, offerId));

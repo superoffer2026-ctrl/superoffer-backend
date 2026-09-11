@@ -22,6 +22,13 @@ export class CreateOfferDto {
   @IsString() @IsNotEmpty()
   studentUserId!: string;
 
+  /**
+   * The programme this offer is for. What makes "select a programme" fill the
+   * offer in rather than the officer retyping a prospectus every time.
+   */
+  @IsOptional() @IsString()
+  productId?: string;
+
   /** Defaults to the sending organization's own category when omitted. */
   @IsOptional() @IsIn(OFFER_CATEGORIES)
   category?: string;

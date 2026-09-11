@@ -155,10 +155,7 @@ async function seedStudent(input: { contactEmail: string; phone: string; fullNam
                 motherIncome: '800000',
                 annualHouseholdIncome: '1800000',
                 currency: 'INR',
-                employmentCategory: 'Salaried',
-                needsLoan: 'yes',
-                declarationAccurate: true,
-                declarationConsent: true
+                needsLoan: 'yes'
               },
               projects: {
                 projects: [{ title: 'Student success prediction model', role: 'Developer', description: 'ML model predicting student outcomes.' }],

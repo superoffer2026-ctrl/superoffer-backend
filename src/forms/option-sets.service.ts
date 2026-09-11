@@ -1,14 +1,14 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FormsService } from './forms.service';
-import { COUNTRIES, INDIA_CITIES } from '../reference/data/geo.data';
+import { COUNTRIES, INDIA_CITIES, INDIA_STATES } from '../reference/data/geo.data';
 import {
   COMPETITIVE_EXAM_OPTIONS, CURRICULUM_OPTIONS, EDUCATION_GAP_OPTIONS, EDUCATION_YEARS,
   ENGLISH_EXAM_OPTIONS, EXAM_STATUS_OPTIONS, FIELDS_OF_STUDY, INTAKE_OPTIONS,
   PROGRAM_LEVELS, START_YEARS, STUDY_COUNTRIES, UNIVERSITY_OPTIONS
 } from '../reference/data/master-sheet.data';
 import {
-  CURRENCY_OPTIONS, EARNING_MEMBER_OPTIONS, EMPLOYMENT_CATEGORY_OPTIONS,
+  CURRENCY_OPTIONS, EARNING_MEMBER_OPTIONS,
   EMPLOYMENT_TYPES, FUNDING_SOURCE_OPTIONS, QUALIFICATION_OPTIONS
 } from '../reference/data/wizard.data';
 
@@ -22,6 +22,7 @@ import {
 const SEED: Array<{ key: string; label: string; description: string; values: readonly string[] }> = [
   { key: 'countries', label: 'Countries', description: 'Every country the platform serves', values: COUNTRIES.map(c => c.name) },
   { key: 'dialCodes', label: 'Dial codes', description: 'Country codes for phone numbers', values: COUNTRIES.map(c => c.iso2) },
+  { key: 'indiaStates', label: 'Indian states', description: 'States and union territories offered when the country is India', values: INDIA_STATES },
   { key: 'indiaCities', label: 'Indian cities', description: 'Cities offered when the country is India', values: INDIA_CITIES },
   { key: 'studyCountries', label: 'Study destinations', description: 'Where a student may choose to study', values: STUDY_COUNTRIES },
   { key: 'fieldsOfStudy', label: 'Fields of study', description: 'Subjects a student can name', values: FIELDS_OF_STUDY },
@@ -39,8 +40,7 @@ const SEED: Array<{ key: string; label: string; description: string; values: rea
   { key: 'employmentTypes', label: 'Employment types', description: 'How someone is employed', values: EMPLOYMENT_TYPES },
   { key: 'fundingSourceOptions', label: 'Funding sources', description: 'How the studies will be paid for', values: FUNDING_SOURCE_OPTIONS },
   { key: 'earningMemberOptions', label: 'Earning members', description: 'Who in the family earns', values: EARNING_MEMBER_OPTIONS },
-  { key: 'currencyOptions', label: 'Currencies', description: 'Currencies an amount can be given in', values: CURRENCY_OPTIONS },
-  { key: 'employmentCategoryOptions', label: 'Employment categories', description: "A co-applicant's employment", values: EMPLOYMENT_CATEGORY_OPTIONS }
+  { key: 'currencyOptions', label: 'Currencies', description: 'Currencies an amount can be given in', values: CURRENCY_OPTIONS }
 ];
 
 @Injectable()

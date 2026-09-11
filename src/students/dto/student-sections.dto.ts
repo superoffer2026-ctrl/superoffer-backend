@@ -22,7 +22,6 @@ import {
 import {
   CURRENCY_OPTIONS,
   EARNING_MEMBER_OPTIONS,
-  EMPLOYMENT_CATEGORY_OPTIONS,
   EMPLOYMENT_TYPES,
   FUNDING_SOURCE_OPTIONS,
   QUALIFICATION_OPTIONS
@@ -80,6 +79,10 @@ export class PersonalInformationDto {
   @IsOptional()
   @IsString()
   country?: string;
+
+  /** Scopes the city list. Matched by exact name against the /reference/geo list. */
+  @IsOptional() @IsString()
+  state?: string;
 
   @IsOptional() @IsString()
   city?: string;
@@ -307,17 +310,8 @@ export class FinancialInformationDto {
   @IsString()
   currency!: string;
 
-  @IsString()
-  employmentCategory!: string;
-
   @IsIn(['yes', 'no'])
   needsLoan!: string;
-
-  @IsBoolean()
-  declarationAccurate!: boolean;
-
-  @IsBoolean()
-  declarationConsent!: boolean;
 }
 
 // ── Step 8 · Projects & achievements ─────────────────────────────────────────

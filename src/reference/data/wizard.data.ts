@@ -39,15 +39,6 @@ export const FUNDING_SOURCE_OPTIONS: string[] = [
   'Combination of the Above'
 ];
 
-/** These values gate which financial documents are requested, so they must match the frontend exactly. */
-export const EMPLOYMENT_CATEGORY_OPTIONS: string[] = [
-  'Salaried',
-  'Self-Employed',
-  'Business',
-  'Agriculture',
-  'Other'
-];
-
 /**
  * Restricted to the three earners the wizard maps to income fields
  * (`fatherIncome` / `motherIncome` / `guardianIncome`). Adding an option here

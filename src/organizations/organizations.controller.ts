@@ -1,4 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req,
+  UploadedFile, UseGuards, UseInterceptors
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Organization } from '@prisma/client';
 import { ApprovedOrganizationGuard } from '../auth/approved-organization.guard';
@@ -16,6 +19,8 @@ import {
 } from './dto/organization.dto';
 import { OfferTemplatesService, type OfferTemplateInput } from './offer-templates.service';
 import { OrganizationsService } from './organizations.service';
+import { imageUploadInterceptor } from '../media/media.upload';
+import { LocalMediaStorage } from '../media/media.storage';
 
 @ApiTags('organizations')
 @ApiBearerAuth()
@@ -26,7 +31,8 @@ export class OrganizationsController {
   constructor(
     private organizations: OrganizationsService,
     private discovery: DiscoveryService,
-    private templates: OfferTemplatesService
+    private templates: OfferTemplatesService,
+    private media: LocalMediaStorage
   ) {}
 
   // ── Profile, criteria, subscription, notification preferences ─────────────
@@ -58,6 +64,47 @@ export class OrganizationsController {
   @Get('products')
   products(@Req() request: { organization: Organization }) {
     return this.organizations.listProducts(request.organization.id);
+  }
+
+  /**
+   * The organisation's own logo and cover, and a programme's image.
+   *
+   * Uploaded by the organisation itself: once an admin has approved them, what
+   * they look like and what they teach is theirs to maintain, not ours to
+   * research. The interceptor stages the file; the storage layer decides where
+   * it finally lives and hands back an opaque reference.
+   */
+  @Post('logo')
+  @UseInterceptors(imageUploadInterceptor())
+  async uploadLogo(@Req() request: { organization: Organization }, @UploadedFile() file?: Express.Multer.File) {
+    return this.saveImage(request.organization.id, 'logoRef', file);
+  }
+
+  @Post('cover')
+  @UseInterceptors(imageUploadInterceptor())
+  async uploadCover(@Req() request: { organization: Organization }, @UploadedFile() file?: Express.Multer.File) {
+    return this.saveImage(request.organization.id, 'coverRef', file);
+  }
+
+  @Post('products/:id/image')
+  @UseInterceptors(imageUploadInterceptor())
+  async uploadProductImage(
+    @Req() request: { organization: Organization },
+    @Param('id') id: string,
+    @UploadedFile() file?: Express.Multer.File
+  ) {
+    if (!file) throw new BadRequestException({ code: 'NO_FILE', message: 'Choose an image to upload' });
+    const ref = await this.media.keep(file.path, 'programs', file.originalname);
+    const product = await this.organizations.setProductImage(request.organization.id, id, ref);
+    return { imageUrl: this.media.urlFor(product.imageRef) };
+  }
+
+  private async saveImage(organizationId: string, field: 'logoRef' | 'coverRef', file?: Express.Multer.File) {
+    if (!file) throw new BadRequestException({ code: 'NO_FILE', message: 'Choose an image to upload' });
+    const folder = field === 'logoRef' ? 'logos' : 'covers';
+    const ref = await this.media.keep(file.path, folder, file.originalname);
+    const organization = await this.organizations.setOrganizationImage(organizationId, field, ref);
+    return { logoUrl: this.media.urlFor(organization.logoRef), coverUrl: this.media.urlFor(organization.coverRef) };
   }
 
   @Post('products')

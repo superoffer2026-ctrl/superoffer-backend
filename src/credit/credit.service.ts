@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { decryptField, encryptField, isEncrypted, isIndividualPan, isPanFormat, maskPan } from '../common/field-crypto';
-import { StubBureauProvider } from './stub-bureau.provider';
+import { SurePassProvider } from './surepass.provider';
 import {
   BAND_FRESH_DAYS,
   CONSENT_VALID_DAYS,
@@ -24,7 +24,7 @@ const days = (n: number) => n * 24 * 60 * 60 * 1000;
 export class CreditService {
   private readonly logger = new Logger(CreditService.name);
 
-  constructor(private prisma: PrismaService, private bureau: StubBureauProvider) {}
+  constructor(private prisma: PrismaService, private bureau: SurePassProvider) {}
 
   // ── The co-applicant ──────────────────────────────────────────────────────
 
@@ -42,9 +42,17 @@ export class CreditService {
       throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Enter a PAN in the form ABCDE1234F' });
     }
     if (pan && !isIndividualPan(pan)) {
+      /**
+       * The fourth character is the holder type, and naming it is the difference
+       * between a message someone can act on and one they argue with: "C" really
+       * is a company, but "D" is not a valid type at all, and calling both a
+       * company sends someone hunting for a mistake they did not make.
+       */
       throw new BadRequestException({
         code: 'VALIDATION_ERROR',
-        message: 'That PAN belongs to a company or trust. A co-applicant has to be a person.'
+        message:
+          `A co-applicant has to be a person, and the 4th character of their PAN says who holds it — ` +
+          `this one is "${pan[3]}", not "P". Check it is the individual's own PAN, e.g. ABCPE1234F.`
       });
     }
 
@@ -85,24 +93,40 @@ export class CreditService {
     return { ...rest, panNumber: stored.panMasked || '' };
   }
 
-  /** The full identity, for the one moment it is sent to a bureau. */
+  /**
+   * The full identity, for the one moment it is sent to the bureau.
+   *
+   * This is the only place a PAN is decrypted, and the value never leaves the
+   * call — every response the browser sees carries the masked form.
+   */
   private async subjectFor(userId: string): Promise<CreditSubject> {
     const profile = await this.prisma.studentProfile.findUnique({ where: { userId } });
     const stored = (profile?.coApplicant as Record<string, unknown>) || {};
 
     const pan = String(stored.panNumber || '');
-    if (!pan) {
+    const name = String(stored.name || '').trim();
+    const mobileNumber = String(stored.mobileNumber || '').replace(/\D/g, '').slice(-10);
+    const gender = String(stored.gender || '').toLowerCase();
+
+    const missing = [
+      !name && 'their full name',
+      !pan && 'their PAN',
+      mobileNumber.length !== 10 && 'their 10-digit mobile number',
+      gender !== 'male' && gender !== 'female' && 'their gender'
+    ].filter(Boolean) as string[];
+
+    if (missing.length) {
       throw new BadRequestException({
-        code: 'NO_CO_APPLICANT',
-        message: 'Add a parent or guardian with their PAN before running a credit check'
+        code: 'CREDIT_DETAILS_INCOMPLETE',
+        message: `A credit check needs ${missing.join(', ')}.`
       });
     }
 
     return {
-      name: String(stored.name || ''),
+      name,
       pan: isEncrypted(pan) ? decryptField(pan) : pan,
-      dateOfBirth: String(stored.dateOfBirth || ''),
-      mobileNumber: String(stored.mobileNumber || '')
+      mobileNumber,
+      gender: gender as 'male' | 'female'
     };
   }
 
@@ -229,7 +253,7 @@ export class CreditService {
       orderBy: { pulledAt: 'desc' }
     });
     if (existing) {
-      await audit('OK', 'Reused a band that is still current', consent.id);
+      await audit('OK', 'Reused a score that is still current', consent.id);
       return { ...existing, reused: true };
     }
 
@@ -266,6 +290,7 @@ export class CreditService {
         organizationId: options.organizationId ?? null,
         kind,
         enquiry: result.enquiry,
+        score: result.score ?? null,
         band: result.band ?? null,
         outcome: result.outcome,
         providerRef: result.providerRef ?? null,
@@ -275,7 +300,8 @@ export class CreditService {
     });
 
     await audit(result.outcome === 'SCORED' ? 'OK' : result.outcome, result.detail, consent.id);
-    return { ...check, reused: false };
+    /** `detail` is the reason a person can act on; it is not stored on the check itself. */
+    return { ...check, reused: false, detail: result.detail };
   }
 
   /** The most recent look-up a given reader is entitled to see. */

@@ -91,9 +91,27 @@ model Organization {
   reviewNote         String?
   /// Editable profile copy shown in the workspace's Org Profile tab.
   description        String?
-  /// Subscription state. `profilesViewed` is the quota counter for the cycle.
+  /// Opaque media references, not paths and not URLs.
+  ///
+  /// The value is a storage key the media layer resolves — `local/...` today,
+  /// an S3 object key tomorrow. Nothing outside that layer parses it, so moving
+  /// to cloud storage changes one class rather than every row and every screen.
+  logoRef            String?
+  coverRef           String?
+  /// The plan of last resort: what an organisation gets before anyone has sold
+  /// them anything. The active paid `Subscription` overrides it, and is the only
+  /// thing that can — an organisation cannot promote itself.
   plan               String                        @default("Professional")
+  /// Usage before any subscription existed. Live counting happens per period on
+  /// `Subscription.profilesViewed`, so a new period starts at zero by construction.
   profilesViewed     Int                           @default(0)
+  /// Set by an admin to cut off an organisation that has not paid. Deliberately
+  /// manual: an overdue invoice shows as a warning, and a human decides whether
+  /// it is worth switching a customer off.
+  suspendedAt        DateTime?
+  suspensionReason   String?
+  subscriptions      Subscription[]
+  profileViews       ProfileView[]
   /// Bank-only: which students an officer may evaluate (docs/09-Business-Rules.md).
   bankEvaluationMode String?
   bureauCredential   OrganizationBureauCredential?
@@ -369,12 +387,85 @@ model StudentProfile {
   alumniSince      DateTime?
   /// The offer whose admission made them an alumnus.
   alumniOfferId    String?
+  /// Whether this student still needs a seat, and whether they still need funding.
+  ///
+  /// Two markets, filled independently: accepting a place says nothing about
+  /// whether the fees are covered, and arranging a loan says nothing about
+  /// where they are going. One flag for both would hide a funded student from
+  /// every university, or keep selling a placed student to banks that pay per
+  /// candidate — so each side is closed by its own acceptance and reopened by
+  /// its own withdrawal.
+  ///
+  /// OPEN or PLACED. Set from the student's own decision, so the market closes
+  /// the moment they commit rather than whenever an admin gets round to it;
+  /// `segment` remains the slower, verified judgement on top.
+  admissionStatus  String      @default("OPEN")
+  financeStatus    String      @default("OPEN")
   submittedAt      DateTime?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
   @@index([segment])
+  @@index([admissionStatus])
+  @@index([financeStatus])
   @@map("student_profiles")
+}
+
+/// One billing period an organisation has been sold, and whether they paid for it.
+///
+/// Money changes hands offline — a transfer, a cheque, an invoice settled by the
+/// finance team — so nothing here charges anybody. It records what was agreed and
+/// what has been received, so the organisation can see their own bills and our
+/// team can see who still owes.
+model Subscription {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Basic, Professional or Enterprise. The active paid row decides the quota.
+  plan           String
+  periodStart    DateTime
+  periodEnd      DateTime
+  /// Stored in the smallest unit — paise for INR — so no total is ever a float.
+  amountMinor    Int
+  currency       String        @default("INR")
+  /// DRAFT, ISSUED, PAID, OVERDUE or CANCELLED.
+  status         String        @default("ISSUED")
+  /// Human-readable, e.g. SO-2026-0007. What a customer quotes when they call.
+  invoiceNumber  String        @unique
+  /// How the offline payment arrived: a NEFT reference, a cheque number.
+  paymentRef     String?
+  paidAt         DateTime?
+  /// Who on our side confirmed the money landed.
+  recordedBy     String?
+  note           String?
+  /// Views used inside this period. A new period is a new row, so it starts at zero.
+  profilesViewed Int           @default(0)
+  views          ProfileView[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId, periodStart])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+/// One student, opened by one organisation, once per billing period.
+///
+/// The row exists so a second look at the same student does not cost a second
+/// view: an organisation pays to reach a person, not to re-open a page.
+model ProfileView {
+  id             String        @id @default(uuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  studentUserId  String
+  /// Null only for a view taken while nothing was sold.
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  viewedAt       DateTime      @default(now())
+
+  @@unique([organizationId, studentUserId, subscriptionId])
+  @@index([organizationId, viewedAt])
+  @@map("profile_views")
 }
 
 /// A course or loan product an organization recruits/lends against. Replaces the
@@ -387,8 +478,24 @@ model OrganizationProduct {
   /// "Academic Product" or "Financial Product" — drives which offer-condition presets apply.
   category       String?
   url            String?
-  /// Category-specific detail (tuition, intakes, rate bands) kept flexible while the UI settles.
+  /// Category-specific detail (rate bands, and anything an admin adds) still kept
+  /// flexible. The academic fields below were promoted out of here: a student
+  /// comparing three universities needs tuition and duration to mean the same
+  /// thing in each offer, which a free-form blob cannot promise.
   terms          Json            @default("{}")
+  /// The academic shape of a programme. Nullable throughout: this table is shared
+  /// with lenders, whose products have none of these.
+  degreeLevel    String?
+  fieldOfStudy   String?
+  durationMonths Int?
+  studyMode      String?
+  campusLocation String?
+  intakes        String[]        @default([])
+  /// Smallest currency unit, so no fee is ever held as a float.
+  tuitionFeeMinor Int?
+  currency       String?
+  scholarshipInfo String?
+  imageRef       String?
   /// The offers this product is willing to make. One is the default.
   templates      OfferTemplate[]
   archivedAt     DateTime?
@@ -510,6 +617,12 @@ model Offer {
   /// offer, so "which template converts" stays an answerable question.
   templateId           String?
   template             OfferTemplate?        @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  /// The university and programme as they stood the day this offer was sent.
+  ///
+  /// Frozen deliberately. An offer is a promise made on a date, and pointing at
+  /// the live programme would let next year's tuition rewrite what a student was
+  /// already promised — silently, and after they had decided on it.
+  programSnapshot      Json                  @default("{}")
   program              String
   headline             String
   /// The template's own description, carried onto the offer it was sent from —
@@ -649,7 +762,11 @@ model CreditCheck {
   kind           String
   /// SOFT or HARD, because a hard enquiry costs the subject something.
   enquiry        String
-  /// A band such as "750-799", never an exact score outside underwriting.
+  /// The CIBIL score itself, 300-900. The co-applicant is shown their own; an
+  /// organisation is only ever given the band, so an exact score stays between
+  /// the bureau and the person it belongs to.
+  score          Int?
+  /// A band such as "750-799" — what discovery and the lender panel read.
   band           String?
   /// Why there is no band: NO_HISTORY, IDENTITY_MISMATCH, PROVIDER_ERROR.
   outcome        String

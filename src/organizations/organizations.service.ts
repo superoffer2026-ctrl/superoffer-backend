@@ -2,13 +2,13 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { Organization, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { BillingService } from '../billing/billing.service';
+import { LocalMediaStorage } from '../media/media.storage';
 import { OrganizationProfileDto, ProductDto, TeamInviteDto } from './dto/organization.dto';
 
 const SHORTLIST_STATUSES = ['SHORTLISTED', 'REJECTED'];
 
 /** Quota per subscription tier. Enterprise is unmetered. */
-const PLAN_CAPACITY: Record<string, number> = { Basic: 50, Professional: 200, Enterprise: Infinity };
-
 const DEFAULT_NOTIFICATION_PREFS = [
   { key: 'invitation_status', label: 'Invitation status changes', detail: 'Viewed, negotiated, accepted, rejected, expired', frequency: 'Instant' },
   { key: 'quota', label: 'Quota alerts', detail: 'When your subscription quota is nearing its limit', frequency: 'Instant' },
@@ -65,14 +65,17 @@ const DEFAULT_CRITERIA: Record<string, Record<string, unknown>> = {
  */
 @Injectable()
 export class OrganizationsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private billing: BillingService,
+    private media: LocalMediaStorage
+  ) {}
 
   /** The workspace loads this once and renders from it — no client-side defaults. */
   async profile(organization: Organization) {
     const prefs = organization.notificationPrefs as unknown[];
     const templates = organization.offerTemplates as unknown[];
     const criteria = organization.criteria as Record<string, unknown>;
-    const capacity = PLAN_CAPACITY[organization.plan] ?? PLAN_CAPACITY.Professional;
 
     return {
       id: organization.id,
@@ -84,25 +87,34 @@ export class OrganizationsService {
       country: organization.country,
       city: organization.city,
       description: organization.description,
+      /** Resolved to URLs here; the stored reference never leaves the server. */
+      logoUrl: this.media.urlFor(organization.logoRef),
+      coverUrl: this.media.urlFor(organization.coverRef),
       verificationStatus: organization.verificationStatus,
       reviewedAt: organization.reviewedAt,
       bankEvaluationMode: organization.bankEvaluationMode || 'ACADEMIC_AND_OFFER',
       criteria: Object.keys(criteria).length ? criteria : DEFAULT_CRITERIA[organization.organizationType] || {},
       notificationPrefs: prefs.length ? prefs : DEFAULT_NOTIFICATION_PREFS,
       offerTemplates: templates.length ? templates : DEFAULT_OFFER_TEMPLATES[organization.organizationType] || [],
-      subscription: {
-        plan: organization.plan,
-        profilesViewed: organization.profilesViewed,
-        capacity: capacity === Infinity ? null : capacity,
-        remaining: capacity === Infinity ? null : Math.max(0, capacity - organization.profilesViewed),
-        quotaPercent: capacity === Infinity ? 12 : Math.min(100, Math.round((organization.profilesViewed / capacity) * 100))
-      }
+      /** Whatever the active subscription grants, and what is left of it. */
+      subscription: await this.billing.entitlement(organization)
     };
   }
 
+  /**
+   * An organisation edits its own profile — but not what it is entitled to.
+   *
+   * `plan` used to be accepted here, which meant a university could put itself on
+   * Enterprise from its own settings screen and take unlimited profile views
+   * without anyone selling them anything. Plans are sold offline now, so only an
+   * admin recording a subscription can change one.
+   */
   async updateProfile(organization: Organization, dto: OrganizationProfileDto) {
-    if (dto.plan && !PLAN_CAPACITY[dto.plan]) {
-      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Unknown subscription plan' });
+    if (dto.plan !== undefined) {
+      throw new BadRequestException({
+        code: 'PLAN_NOT_SELF_SERVICE',
+        message: 'Subscription plans are arranged with the SuperOffer team, not changed here.'
+      });
     }
     const updated = await this.prisma.organization.update({
       where: { id: organization.id },
@@ -111,7 +123,6 @@ export class OrganizationsService {
         ...(dto.description === undefined ? {} : { description: dto.description }),
         ...(dto.city === undefined ? {} : { city: dto.city }),
         ...(dto.website === undefined ? {} : { website: dto.website }),
-        ...(dto.plan === undefined ? {} : { plan: dto.plan }),
         ...(dto.bankEvaluationMode === undefined ? {} : { bankEvaluationMode: dto.bankEvaluationMode }),
         ...(dto.criteria === undefined ? {} : { criteria: dto.criteria as Prisma.InputJsonValue }),
         ...(dto.notificationPrefs === undefined ? {} : { notificationPrefs: dto.notificationPrefs as Prisma.InputJsonValue }),
@@ -123,11 +134,32 @@ export class OrganizationsService {
 
   // ── Product catalog ───────────────────────────────────────────────────────
 
-  listProducts(organizationId: string) {
-    return this.prisma.organizationProduct.findMany({
+  async listProducts(organizationId: string) {
+    const rows = await this.prisma.organizationProduct.findMany({
       where: { organizationId, archivedAt: null },
       orderBy: { createdAt: 'asc' }
     });
+    /** Fees leave as decimal strings and images as URLs; the row's own shapes stay internal. */
+    return rows.map(row => ({
+      ...row,
+      tuitionFee: row.tuitionFeeMinor === null ? null : (row.tuitionFeeMinor / 100).toFixed(2),
+      imageUrl: this.media.urlFor(row.imageRef)
+    }));
+  }
+
+  /** The academic columns, from whole units to the minor units actually stored. */
+  private programColumns(dto: ProductDto) {
+    return {
+      ...(dto.degreeLevel === undefined ? {} : { degreeLevel: dto.degreeLevel || null }),
+      ...(dto.fieldOfStudy === undefined ? {} : { fieldOfStudy: dto.fieldOfStudy || null }),
+      ...(dto.durationMonths === undefined ? {} : { durationMonths: dto.durationMonths ?? null }),
+      ...(dto.studyMode === undefined ? {} : { studyMode: dto.studyMode || null }),
+      ...(dto.campusLocation === undefined ? {} : { campusLocation: dto.campusLocation || null }),
+      ...(dto.intakes === undefined ? {} : { intakes: dto.intakes }),
+      ...(dto.tuitionFee === undefined ? {} : { tuitionFeeMinor: dto.tuitionFee === null ? null : Math.round(dto.tuitionFee * 100) }),
+      ...(dto.currency === undefined ? {} : { currency: dto.currency || null }),
+      ...(dto.scholarshipInfo === undefined ? {} : { scholarshipInfo: dto.scholarshipInfo || null })
+    };
   }
 
   createProduct(organizationId: string, dto: ProductDto) {
@@ -137,6 +169,7 @@ export class OrganizationsService {
         name: dto.name,
         category: dto.category,
         url: dto.url,
+        ...this.programColumns(dto),
         terms: (dto.terms || {}) as Prisma.InputJsonValue
       }
     });
@@ -150,9 +183,24 @@ export class OrganizationsService {
         name: dto.name,
         category: dto.category,
         url: dto.url,
+        ...this.programColumns(dto),
         ...(dto.terms === undefined ? {} : { terms: dto.terms as Prisma.InputJsonValue })
       }
     });
+  }
+
+  /** One image per programme, replacing whatever was there. */
+  async setProductImage(organizationId: string, id: string, ref: string) {
+    const existing = await this.assertOwnedProduct(organizationId, id);
+    await this.media.remove(existing.imageRef);
+    return this.prisma.organizationProduct.update({ where: { id }, data: { imageRef: ref } });
+  }
+
+  /** The organisation's own logo and cover, uploaded by the organisation itself. */
+  async setOrganizationImage(organizationId: string, field: 'logoRef' | 'coverRef', ref: string) {
+    const organization = await this.prisma.organization.findUniqueOrThrow({ where: { id: organizationId } });
+    await this.media.remove(organization[field]);
+    return this.prisma.organization.update({ where: { id: organizationId }, data: { [field]: ref } });
   }
 
   /** Archived rather than deleted, so offers that reference a product keep their history. */
