@@ -8,7 +8,6 @@ import { CreateOfferDto, OfferFlagsDto } from './dto/offer.dto';
 const DEFAULT_RESPONSE_WINDOW_DAYS = 14;
 
 /** Once an offer reaches one of these, nothing may change it again. */
-import { availabilityFieldFor, availabilityFrom } from './marketplace-availability';
 import { LocalMediaStorage } from '../media/media.storage';
 
 const TERMINAL_STATUSES: OfferStatus[] = ['ACCEPTED', 'REJECTED', 'WITHDRAWN', 'EXPIRED'];
@@ -365,30 +364,6 @@ export class OffersService {
     return this.toStudentOffer(updated);
   }
 
-  /**
-   * Recomputes one market's availability from every offer the student holds in
-   * it, and touches nothing else.
-   *
-   * Reading the offers back rather than flipping a flag is what keeps the two
-   * markets independent and makes withdrawal safe: a student with two accepted
-   * places does not become available again because one was withdrawn.
-   */
-  private async refreshAvailability(studentUserId: string, category: OfferCategory) {
-    const field = availabilityFieldFor(category);
-    /** A scholarship or consultancy offer fills neither slot. */
-    if (!field) return;
-
-    const offers = await this.prisma.offer.findMany({
-      where: { studentUserId },
-      select: { category: true, studentDecision: true, status: true }
-    });
-
-    await this.prisma.studentProfile.updateMany({
-      where: { userId: studentUserId },
-      data: { [field]: availabilityFrom(offers, field) }
-    });
-  }
-
   async decide(studentUserId: string, offerId: string, decision: string) {
     const offer = await this.findOwnedByStudent(studentUserId, offerId);
     if (TERMINAL_STATUSES.includes(offer.status)) {
@@ -409,8 +384,14 @@ export class OffersService {
       include: { organization: true, messages: true, student: true }
     });
 
-    /** Accepting a place closes that market; rejecting one reopens it. */
-    await this.refreshAvailability(studentUserId, updated.category);
+    /*
+     * No market is closed or reopened here.
+     *
+     * A student may be proceeding with several universities and more than one
+     * lender at the same time, so accepting one invite says nothing about the
+     * others: every offer keeps its own status, and none of the student's other
+     * live invites is touched. See marketplace-availability.ts.
+     */
 
     /** One event per decision, so an admin can word each one differently. */
     const decided = decision.toLowerCase();
@@ -664,6 +645,13 @@ export class OffersService {
       organization,
       {
         studentUserId: input.studentUserId,
+        /**
+         * The product the template belongs to, so `create` freezes its academic
+         * record onto the offer. Without this a one-click invitation reached the
+         * student with no degree level, duration, campus, intake, tuition or
+         * currency — the very details a template deliberately does not restate.
+         */
+        productId: product.id,
         program: product.name,
         headline: template.name,
         description: template.description || undefined,
@@ -733,9 +721,6 @@ export class OffersService {
       data: { status: 'WITHDRAWN', withdrawnAt: new Date() },
       include: { organization: true, messages: true, student: true }
     });
-
-    /** A withdrawn offer places nobody, so that market may be open again. */
-    await this.refreshAvailability(updated.studentUserId, updated.category);
 
     await this.automation.run('offer.withdrawn', { offer: updated, actor: 'organization', triggerRef: 'withdrawn' });
     return this.toOrganizationOffer(await this.findOwnedByOrganization(organizationId, offerId));

@@ -14,28 +14,25 @@ export const AVAILABILITY_FIELD: Partial<Record<OfferCategory, 'admissionStatus'
   BANK: 'financeStatus'
 };
 
-export type Availability = 'OPEN' | 'PLACED';
-
-/** The slot this offer closes when accepted, or null when it closes none. */
-export const availabilityFieldFor = (category: OfferCategory) => AVAILABILITY_FIELD[category] ?? null;
-
 /**
- * What the student's own decisions add up to, recomputed rather than toggled.
+ * Accepting an invite no longer closes a market.
  *
- * A student can hold several offers in one market. Deriving the answer from all
- * of them means withdrawing one accepted place cannot reopen a market they are
- * still committed to through another, which a simple flip would get wrong.
+ * `availabilityFrom` used to derive PLACED from any accepted offer, which made
+ * one acceptance a global, exclusive commitment: the student vanished from
+ * every other university's search and could not be opened by one that had not
+ * already engaged them. That is not what accepting means here. A student may
+ * hold invites from five universities and two lenders and be genuinely
+ * proceeding with several at once — each acceptance is a relationship with that
+ * one organisation, not a decision about the others.
+ *
+ * What does take a student out of the market is a *confirmed* admission, which
+ * is a later and different event: the university says the student actually
+ * enrolled, and `AdmissionsService` moves them to the ALUMNI segment with
+ * `discoverable: false`. That is the only exclusive step, and it is not the
+ * student clicking Accept.
+ *
+ * The columns and their indexes stay. They remain the switch the discovery
+ * filter reads, so an explicit "stop putting me in front of universities"
+ * control has somewhere to write — it is simply no longer written by an
+ * acceptance.
  */
-export const availabilityFrom = (
-  offers: { category: OfferCategory; studentDecision: string; status: string }[],
-  field: 'admissionStatus' | 'financeStatus'
-): Availability => {
-  const placed = offers.some(
-    offer =>
-      availabilityFieldFor(offer.category) === field &&
-      offer.studentDecision === 'ACCEPTED' &&
-      offer.status !== 'WITHDRAWN' &&
-      offer.status !== 'EXPIRED'
-  );
-  return placed ? 'PLACED' : 'OPEN';
-};

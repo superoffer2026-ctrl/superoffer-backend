@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { availabilityFieldFor, availabilityFrom } from '../offers/marketplace-availability';
 
 /**
  * Following up the students who accepted an offer, and removing their data
@@ -224,24 +223,12 @@ export class AdmissionsService {
      * wrong, which is the whole reason this is a segment and not a deletion.
      */
     const alumni = status === 'CONFIRMED';
-    /**
-     * NOT_ADMITTED returns them to the market this offer belonged to, and only
-     * that one: a student who did not get the place still needs one, but their
-     * funding arrangements are untouched by the news.
+    /*
+     * Nothing to reopen per-market any more: an acceptance no longer closes one.
+     * NOT_ADMITTED still returns the student to the market, through the segment
+     * and `discoverable` reset immediately below — which is the switch that
+     * actually governs whether they are put in front of organisations.
      */
-    if (status === 'NOT_ADMITTED') {
-      const field = availabilityFieldFor(offer.category);
-      if (field) {
-        const offers = await this.prisma.offer.findMany({
-          where: { studentUserId: offer.studentUserId },
-          select: { category: true, studentDecision: true, status: true }
-        });
-        await this.prisma.studentProfile.updateMany({
-          where: { userId: offer.studentUserId },
-          data: { [field]: availabilityFrom(offers, field) }
-        });
-      }
-    }
 
     await this.prisma.studentProfile.updateMany({
       where: { userId: offer.studentUserId },
