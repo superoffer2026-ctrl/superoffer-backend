@@ -1,8 +1,13 @@
 node_modules/
 dist/
-.env
 coverage/
 uploads/
+
+# Every local environment file, however it is named — `.env` alone left
+# `.env.save` and `.env.local` tracked, which is how a token reaches a remote.
+.env
+.env.*
+!.env.example
 
 # Bank bureau certificates. Encrypted at rest, but material like this never
 # belongs in version control under any circumstances.
