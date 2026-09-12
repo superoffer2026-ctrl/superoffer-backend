@@ -124,10 +124,13 @@ export class OrganizationsController {
 
   // ── The offers a product is prepared to make ─────────────────────────────
 
-  /** Every template this organisation has, so the products page can show them. */
+  /**
+   * Every template this organisation has, so the products page can show them.
+   * `?archived=1` asks for the ones put away, which the archive drawer lists.
+   */
   @Get('offer-templates')
-  allTemplates(@Req() request: { organization: Organization }) {
-    return this.templates.listAll(request.organization);
+  allTemplates(@Req() request: { organization: Organization }, @Query('archived') archived?: string) {
+    return this.templates.listAll(request.organization, archived === '1' || archived === 'true');
   }
 
   @Get('products/:productId/templates')
@@ -157,6 +160,12 @@ export class OrganizationsController {
   @Delete('offer-templates/:id')
   archiveTemplate(@Req() request: { organization: Organization }, @Param('id') id: string) {
     return this.templates.archive(request.organization, id);
+  }
+
+  /** The way back out of the archive, so "Archive" is not a delete in disguise. */
+  @Post('offer-templates/:id/restore')
+  restoreTemplate(@Req() request: { organization: Organization }, @Param('id') id: string) {
+    return this.templates.restore(request.organization, id);
   }
 
   @Post('products/import')

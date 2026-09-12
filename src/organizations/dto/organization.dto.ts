@@ -1,7 +1,9 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayNotEmpty, IsArray, IsEmail, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Max, Min, ValidateNested
+  ArrayNotEmpty, IsArray, IsEmail, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Matches, Max, Min,
+  ValidateIf, ValidateNested
 } from 'class-validator';
+import { WEBSITE_PATTERN } from './verification.dto';
 
 export const SUBSCRIPTION_PLANS = ['Basic', 'Professional', 'Enterprise'] as const;
 export const BANK_EVALUATION_MODES = ['ACADEMIC_ONLY', 'UNIVERSITY_OFFER_ONLY', 'ACADEMIC_AND_OFFER'] as const;
@@ -17,8 +19,19 @@ export class OrganizationProfileDto {
   @IsOptional() @IsString()
   city?: string;
 
-  /** The workspace calls this "official domain". */
+  /**
+   * The organisation's official website, shown to every student who holds one
+   * of its offers. Asked for once here and resolved live at display time, so
+   * changing it reaches offers already sent.
+   *
+   * Validated against the same pattern the verification page uses, which takes
+   * a bare host as well as a full URL — existing records were entered as
+   * `www.example.edu`. `ValidateIf` lets an empty string through, because
+   * clearing the field is a legitimate edit and `@Matches` would reject it.
+   */
   @IsOptional() @IsString()
+  @ValidateIf((_object, value) => value !== '')
+  @Matches(WEBSITE_PATTERN, { message: 'Enter a valid website, for example https://www.university.edu' })
   website?: string;
 
   @IsOptional() @IsIn(SUBSCRIPTION_PLANS)

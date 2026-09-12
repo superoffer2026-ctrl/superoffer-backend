@@ -46,12 +46,21 @@ export class OfferTemplatesService {
     return { templates };
   }
 
-  /** Every template this organisation has, grouped by the product it belongs to. */
-  async listAll(organization: Organization) {
+  /**
+   * Every template this organisation has, grouped by the product it belongs to.
+   *
+   * `archived` asks for the ones that have been put away instead. They are kept
+   * apart rather than mixed in with a flag, because every caller wants one set
+   * or the other: the product list draws the live ones, and the archive drawer
+   * under it draws these.
+   */
+  async listAll(organization: Organization, archived = false) {
     const templates = await this.prisma.offerTemplate.findMany({
-      where: { organizationId: organization.id, archivedAt: null },
+      where: { organizationId: organization.id, archivedAt: archived ? { not: null } : null },
       include: { product: { select: { id: true, name: true, category: true } } },
-      orderBy: [{ productId: 'asc' }, { isDefault: 'desc' }]
+      orderBy: archived
+        ? [{ archivedAt: 'desc' }]
+        : [{ productId: 'asc' }, { isDefault: 'desc' }]
     });
     return { templates };
   }
@@ -136,6 +145,43 @@ export class OfferTemplatesService {
     }
 
     return { archived: true };
+  }
+
+  /**
+   * Brings an archived template back to the product it belongs to.
+   *
+   * It returns as an ordinary template, never as the one-click default: a
+   * product may have acquired one in the meantime, and restoring something a
+   * registrar put away months ago must not quietly change what a single click
+   * now sends. Making it the default again is a separate, deliberate act.
+   *
+   * A product that has since been archived is a dead end — the template would
+   * come back attached to something no longer on offer — so that is refused
+   * with an explanation rather than restored into limbo.
+   */
+  async restore(organization: Organization, id: string) {
+    const existing = await this.prisma.offerTemplate.findFirst({
+      where: { id, organizationId: organization.id, archivedAt: { not: null } },
+      include: { product: { select: { id: true, name: true, archivedAt: true } } }
+    });
+    if (!existing) throw new NotFoundException({ code: 'TEMPLATE_NOT_FOUND', message: 'No such archived template' });
+
+    if (existing.product?.archivedAt) {
+      throw new BadRequestException({
+        code: 'PRODUCT_ARCHIVED',
+        message: `${existing.product.name} is no longer in your catalog, so this template has nothing to attach to.`
+      });
+    }
+
+    /** The first live template a product has is always its default. */
+    const live = await this.prisma.offerTemplate.count({
+      where: { productId: existing.productId, archivedAt: null }
+    });
+
+    return this.prisma.offerTemplate.update({
+      where: { id },
+      data: { archivedAt: null, isDefault: live === 0 }
+    });
   }
 
   private clearDefault(productId: string) {

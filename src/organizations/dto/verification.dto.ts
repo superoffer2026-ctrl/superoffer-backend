@@ -1,7 +1,7 @@
 import { IsBoolean, IsOptional, IsString, Matches } from 'class-validator';
 
 /** A hostname, with or without a scheme — enough to check a domain against. */
-const WEBSITE_PATTERN = /^(https?:\/\/)?([\w-]+\.)+[a-z]{2,}(\/\S*)?$/i;
+export const WEBSITE_PATTERN = /^(https?:\/\/)?([\w-]+\.)+[a-z]{2,}(\/\S*)?$/i;
 
 /**
  * The evidence a reviewer checks against the issuing authority.
