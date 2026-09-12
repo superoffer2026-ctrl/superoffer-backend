@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CreditBureauProvider, CreditPullRequest, CreditPullResult, bandFor } from './credit.types';
+import { CreditBureauProvider, CreditPullRequest, CreditPullResult, SUREPASS_SANDBOX_URL, bandFor } from './credit.types';
 
 /**
  * Sandbox unless SUREPASS_BASE_URL says otherwise. Going live is the same
@@ -8,7 +8,6 @@ import { CreditBureauProvider, CreditPullRequest, CreditPullResult, bandFor } fr
  * set SUREPASS_BASE_URL to the production host and SUREPASS_TOKEN to the
  * production token, and redeploy.
  */
-const DEFAULT_BASE_URL = 'https://sandbox.surepass.app';
 const SCORE_PATH = '/api/v1/credit-report-cibil/score';
 const REQUEST_TIMEOUT_MS = 20_000;
 
@@ -43,14 +42,14 @@ export class SurePassProvider implements CreditBureauProvider, OnModuleInit {
    */
   onModuleInit() {
     const host = this.baseUrl;
-    const stage = host === DEFAULT_BASE_URL ? 'sandbox' : 'custom host';
+    const stage = host === SUREPASS_SANDBOX_URL ? 'sandbox' : 'custom host';
     const credentials = this.token ? 'token configured' : 'NO TOKEN — credit checks will fail until SUREPASS_TOKEN is set';
     this.logger.log(`Credit bureau: SurePass ${stage} (${host}), ${credentials}`);
   }
 
   /** Sandbox today; the live host is the same contract behind a different base URL. */
   private get baseUrl(): string {
-    return (this.config.get<string>('SUREPASS_BASE_URL') || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    return (this.config.get<string>('SUREPASS_BASE_URL') || SUREPASS_SANDBOX_URL).replace(/\/+$/, '');
   }
 
   private get token(): string {

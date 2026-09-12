@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { decryptField, encryptField, isEncrypted, isIndividualPan, isPanFormat, maskPan } from '../common/field-crypto';
 import {
@@ -7,7 +8,9 @@ import {
   CREDIT_BUREAU,
   CreditBureauProvider,
   CreditCheckKind,
-  CreditSubject
+  CreditSubject,
+  SUREPASS_SANDBOX_SAMPLE_MOBILE,
+  SUREPASS_SANDBOX_URL
 } from './credit.types';
 
 const days = (n: number) => n * 24 * 60 * 60 * 1000;
@@ -25,7 +28,23 @@ const days = (n: number) => n * 24 * 60 * 60 * 1000;
 export class CreditService {
   private readonly logger = new Logger(CreditService.name);
 
-  constructor(private prisma: PrismaService, @Inject(CREDIT_BUREAU) private bureau: CreditBureauProvider) {}
+  constructor(
+    private prisma: PrismaService,
+    private config: ConfigService,
+    @Inject(CREDIT_BUREAU) private bureau: CreditBureauProvider
+  ) {}
+
+  /**
+   * Whether this deployment's bureau is SurePass's sandbox.
+   *
+   * Read from the same variable the provider resolves its host from, so the two
+   * can never disagree about which environment they are in — the only thing the
+   * sandbox relaxation is allowed to hang on.
+   */
+  private get sandboxBureau(): boolean {
+    const host = (this.config.get<string>('SUREPASS_BASE_URL') || SUREPASS_SANDBOX_URL).replace(/\/+$/, '');
+    return host === SUREPASS_SANDBOX_URL;
+  }
 
   // ── The co-applicant ──────────────────────────────────────────────────────
 
@@ -106,13 +125,22 @@ export class CreditService {
 
     const pan = String(stored.panNumber || '');
     const name = String(stored.name || '').trim();
-    const mobileNumber = String(stored.mobileNumber || '').replace(/\D/g, '').slice(-10);
+    const digits = String(stored.mobileNumber || '').replace(/\D/g, '');
+    /**
+     * SurePass's sandbox sample identity carries a nine-digit mobile. Accepted
+     * verbatim, and only while the bureau is the sandbox, so the sample can be
+     * submitted as published rather than padded into something that would match
+     * nothing. Production keeps the ten-digit rule for this number and every
+     * other one.
+     */
+    const sandboxSample = this.sandboxBureau && digits === SUREPASS_SANDBOX_SAMPLE_MOBILE;
+    const mobileNumber = sandboxSample ? digits : digits.slice(-10);
     const gender = String(stored.gender || '').toLowerCase();
 
     const missing = [
       !name && 'their full name',
       !pan && 'their PAN',
-      mobileNumber.length !== 10 && 'their 10-digit mobile number',
+      !sandboxSample && mobileNumber.length !== 10 && 'their 10-digit mobile number',
       gender !== 'male' && gender !== 'female' && 'their gender'
     ].filter(Boolean) as string[];
 

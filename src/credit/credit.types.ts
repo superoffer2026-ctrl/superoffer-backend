@@ -88,6 +88,21 @@ export const bandFor = (score: number): string =>
   CREDIT_BANDS.find(entry => score >= entry.from && score <= entry.to)?.band || '300-549';
 
 /** How long a band is treated as current before the panel asks for a refresh. */
+/** SurePass's sandbox host, and the default when SUREPASS_BASE_URL is unset. */
+export const SUREPASS_SANDBOX_URL = 'https://sandbox.surepass.app';
+
+/**
+ * The mobile number SurePass publishes with its sandbox sample identity
+ * (PAN ABCPD1234F, "RAJIV TALWAR").
+ *
+ * Nine digits, so it is not a valid Indian mobile and would never be one. It is
+ * listed here verbatim — not padded, not relaxed into a 9-or-10 digit rule —
+ * and `CreditService.subjectFor` accepts it only while the bureau is pointed at
+ * the sandbox host. Against production the ordinary ten-digit requirement
+ * applies to it like any other number.
+ */
+export const SUREPASS_SANDBOX_SAMPLE_MOBILE = '999000900';
+
 export const BAND_FRESH_DAYS = 90;
 
 /** How long a consent stands before it has to be given again. */
