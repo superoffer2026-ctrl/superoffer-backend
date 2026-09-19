@@ -2,8 +2,7 @@ import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Ip, Param, Patch,
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
-import { OtpRequestDto, OtpVerifyDto, PasswordResetDto } from './dto/otp.dto';
+import { LoginDto, ForgotPasswordDto, PasswordResetDto } from './dto/login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CurrentUser, AuthenticatedUser } from './current-user.decorator';
 
@@ -28,19 +27,12 @@ export class AuthController {
     return this.auth.status(userId);
   }
 
-  @Post('otp/request')
+  @Post('password/forgot')
   @HttpCode(HttpStatus.OK)
-  requestOtp(@Body() dto: OtpRequestDto) {
-    return this.auth.requestOtp(dto);
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.forgotPassword(dto);
   }
 
-  @Post('otp/verify')
-  @HttpCode(HttpStatus.OK)
-  verifyOtp(@Body() dto: OtpVerifyDto, @Ip() ip: string, @Headers('user-agent') userAgent?: string) {
-    return this.auth.verifyOtp(dto, { deviceInfo: userAgent, ip });
-  }
-
-  /** Closes the forgotten-password loop; the student then signs in normally. */
   @Post('password/reset')
   @HttpCode(HttpStatus.OK)
   resetPassword(@Body() dto: PasswordResetDto) {

@@ -5,6 +5,6 @@ import { AdminKeyGuard } from './admin-key.guard';
 
 @Module({
   controllers: [AdminController],
-  providers: [AdminService, AdminKeyGuard]
+  providers: [AdminService]
 })
 export class AdminModule {}

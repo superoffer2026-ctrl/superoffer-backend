@@ -65,7 +65,7 @@ async function seedOrganization(input: {
   await prisma.user.create({
     data: {
       email: input.officerEmail,
-      passwordHash,
+      passwordHash: await require('bcrypt').hash(PASSWORD, 12),
       fullName: input.officerName,
       role: input.officerRole,
       organizationId: organization.id,
@@ -85,7 +85,7 @@ async function seedStudent(input: { contactEmail: string; phone: string; fullNam
     /** Re-running after the switch to WhatsApp identity clears any address left on older rows. */
     return prisma.user.update({
       where: { id: existing.id },
-      data: { email: null, emailVerifiedAt: null, passwordHash, phoneVerifiedAt: new Date() },
+      data: { email: null, emailVerifiedAt: null, passwordHash: await require('bcrypt').hash(PASSWORD, 12), phoneVerifiedAt: new Date() },
       include: { studentProfile: true }
     });
   }
@@ -246,6 +246,19 @@ async function main() {
     });
   }
 
+  
+  // Super Admin
+  await prisma.user.upsert({
+    where: { email: 'admin@superoffer.com' },
+    update: {},
+    create: {
+      email: 'admin@superoffer.com',
+      passwordHash: await bcrypt.hash(PASSWORD, 12),
+      fullName: 'Super Admin',
+      role: 'SUPER_ADMIN',
+    }
+  });
+
   console.log(`
 Seed complete.
 
@@ -253,7 +266,7 @@ Seed complete.
   Loan officer         officer@edufund.example     / ${PASSWORD}
   Student (submitted)  +919876543210               / ${PASSWORD}
   Student (fresh)      +919876500000               / ${PASSWORD}
-  Admin key            value of ADMIN_APPROVAL_KEY in .env
+  Super Admin          admin@superoffer.com        / ${PASSWORD}
 `);
 }
 

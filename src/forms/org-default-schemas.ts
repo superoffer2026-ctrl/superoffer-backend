@@ -85,20 +85,6 @@ const BANK_OFFER: FormSchemaDef = {
   ]
 };
 
-const CONSULTANCY_OFFER: FormSchemaDef = {
-  variant: 'CONSULTANCY',
-  label: 'Consultancy invitation',
-  sections: [
-    section('offerTerms', 'Offer terms', 'Who the invitation is for and what it offers', 'offer', [
-      field('student', 'Student', 'select', 1, { required: true, optionsSource: 'org:students' }),
-      field('course', 'Service', 'text', 2, { required: true, placeholder: 'e.g. Application support' }),
-      field('productName', 'Package', 'select', 3, { optionsSource: 'org:products' }),
-      field('scholarship', 'Fee', 'text', 4, { placeholder: 'e.g. ₹75,000' }),
-      field('conditions', 'What is included', 'text', 5 ),
-      field('deadline', 'Response deadline', 'date', 6, { required: true })
-    ])
-  ]
-};
 
 // ── The product catalogue ───────────────────────────────────────────────────
 
@@ -139,17 +125,14 @@ const BUILT_IN: Record<string, Record<string, FormSchemaDef>> = {
   ORG_OFFER: {
     UNIVERSITY: UNIVERSITY_OFFER,
     BANK: BANK_OFFER,
-    CONSULTANCY: CONSULTANCY_OFFER
   },
   ORG_PRODUCT: {
     UNIVERSITY: productSchema('UNIVERSITY', 'University catalogue entry', 'Course name'),
     BANK: productSchema('BANK', 'Lender catalogue entry', 'Product name'),
-    CONSULTANCY: productSchema('CONSULTANCY', 'Consultancy catalogue entry', 'Service name')
   },
   ORG_PRODUCT_INVITE: {
     UNIVERSITY: productInviteSchema('UNIVERSITY', 'University product invitation'),
     BANK: productInviteSchema('BANK', 'Lender product invitation'),
-    CONSULTANCY: productInviteSchema('CONSULTANCY', 'Consultancy product invitation')
   }
 };
 

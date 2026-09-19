@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { ApiHeader, ApiTags } from '@nestjs/swagger';
-import { AdminKeyGuard } from '../admin/admin-key.guard';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 import { FormSchemaDef } from './form-schema.types';
 import { FormsService } from './forms.service';
 import { OptionSetsService } from './option-sets.service';
@@ -44,8 +46,9 @@ export class PublicFormsController {
 
 /** Authoring, behind the admin key. */
 @ApiTags('admin-forms')
-@ApiHeader({ name: 'x-admin-key', required: true })
-@UseGuards(AdminKeyGuard)
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
 @Controller('admin/form-schema')
 export class AdminFormsController {
   constructor(private forms: FormsService, private optionSets: OptionSetsService) {}

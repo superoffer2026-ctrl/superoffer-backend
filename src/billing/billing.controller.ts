@@ -1,7 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import type { Organization } from '@prisma/client';
-import { AdminKeyGuard } from '../admin/admin-key.guard';
 import { ApprovedOrganizationGuard } from '../auth/approved-organization.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -34,8 +33,9 @@ export class OrganizationBillingController {
 
 /** Selling, invoicing and chasing — all of it by hand, all of it recorded. */
 @ApiTags('admin-billing')
-@ApiHeader({ name: 'x-admin-key', required: true })
-@UseGuards(AdminKeyGuard)
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
 @Controller('admin/billing')
 export class AdminBillingController {
   constructor(private billing: BillingService) {}

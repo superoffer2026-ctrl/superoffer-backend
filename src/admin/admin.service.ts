@@ -3,7 +3,7 @@ import { ApprovalStatus, OrganizationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const APPROVAL_STATUSES = new Set(['PENDING', 'APPROVED', 'REJECTED']);
-const ORG_TYPES = new Set(['UNIVERSITY', 'BANK', 'CONSULTANCY']);
+const ORG_TYPES = new Set(['UNIVERSITY', 'BANK']);
 
 @Injectable()
 export class AdminService {
@@ -16,7 +16,7 @@ export class AdminService {
       throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'status must be PENDING, APPROVED, REJECTED, or ALL' });
     }
     if (normalizedOrgType !== 'ALL' && !ORG_TYPES.has(normalizedOrgType)) {
-      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'org_type must be UNIVERSITY, BANK, CONSULTANCY, or ALL' });
+      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'org_type must be UNIVERSITY, BANK, or ALL' });
     }
 
     const users = await this.prisma.user.findMany({
@@ -62,8 +62,7 @@ export class AdminService {
       approved: allOrgs.filter(org => org.verificationStatus === 'APPROVED').length,
       rejected: allOrgs.filter(org => org.verificationStatus === 'REJECTED').length,
       universities: allOrgs.filter(org => org.organizationType === 'UNIVERSITY' && org.verificationStatus === 'PENDING').length,
-      banks: allOrgs.filter(org => org.organizationType === 'BANK' && org.verificationStatus === 'PENDING').length,
-      consultancies: allOrgs.filter(org => org.organizationType === 'CONSULTANCY' && org.verificationStatus === 'PENDING').length
+      banks: allOrgs.filter(org => org.organizationType === 'BANK' && org.verificationStatus === 'PENDING').length
     };
 
     return { registrations, summary };
@@ -130,7 +129,6 @@ export class AdminService {
       submittedProfiles,
       universities: verified('UNIVERSITY'),
       banks: verified('BANK'),
-      consultancies: verified('CONSULTANCY'),
       pendingVerifications: organizations.filter(org => org.verificationStatus === 'PENDING').length,
       invitationVolume: offers.length,
       acceptanceRate: offers.length ? Math.round((accepted / offers.length) * 100) : 0,
@@ -152,7 +150,7 @@ export class AdminService {
       take: 4,
       select: { id: true, name: true, organizationType: true, submittedAt: true, verificationStatus: true }
     });
-    const label: Record<string, string> = { UNIVERSITY: 'University', BANK: 'Education lender', CONSULTANCY: 'Consultancy' };
+    const label: Record<string, string> = { UNIVERSITY: 'University', BANK: 'Education lender' };
     return organizations.map(org => ({
       id: org.id,
       initial: org.name.charAt(0).toUpperCase(),

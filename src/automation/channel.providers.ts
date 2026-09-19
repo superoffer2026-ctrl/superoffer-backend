@@ -70,7 +70,7 @@ export class ConsoleEmailProvider implements ChannelProvider {
   async send(message: OutboundMessage): Promise<SendResult> {
     const at = new Date().toISOString();
     this.sent.push({ to: message.to.email || '', subject: message.subject, body: message.body, at });
-    this.logger.log(`[mock] to=${message.to.email} subject=${message.subject}`);
+    this.logger.log(`[mock] to=${message.to.email} subject=${message.subject} body=${message.body}`);
     return { provider: 'console', providerMessageId: `console-${this.sent.length}` };
   }
 }

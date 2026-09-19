@@ -376,10 +376,10 @@ export class AdmissionsService {
       }),
       /*
        * The account is kept so the offer's foreign key survives, but nothing
-       * about the person does. The WhatsApp number is a student's identity, so
+       * about the person does. The email is a student's identity, so
        * it is made unusable rather than null — releasing it would let the same
        * number be re-registered and silently inherit this history. The marker
-       * can never match PHONE_PATTERN, so no sign-in or OTP lookup can reach it.
+       * makes it unusable for login.
        */
       this.prisma.user.update({
         where: { id: userId },

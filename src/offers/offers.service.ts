@@ -101,7 +101,8 @@ export class OffersService {
    */
   private toStudentOffer(offer: OfferWithRelations) {
     const expired = offer.status === 'EXPIRED' || offer.expiresAt.getTime() < Date.now();
-    const decision = expired && offer.studentDecision === 'PENDING' ? 'Pending' : this.decisionLabel(offer.studentDecision);
+    let decision = expired && offer.studentDecision === 'PENDING' ? 'Pending' : this.decisionLabel(offer.studentDecision);
+    if (offer.status === 'WITHDRAWN') decision = 'Withdrawn';
 
     return {
       id: offer.id,
@@ -226,7 +227,7 @@ export class OffersService {
   async listForStudent(studentUserId: string) {
     await this.expireOverdue({ studentUserId });
     const offers = await this.prisma.offer.findMany({
-      where: { studentUserId, status: { not: 'WITHDRAWN' } },
+      where: { studentUserId, status: { notIn: [] } },
       include: { organization: true, messages: true },
       orderBy: { createdAt: 'desc' }
     });
@@ -252,7 +253,7 @@ export class OffersService {
   async notificationsForStudent(studentUserId: string) {
     await this.expireOverdue({ studentUserId });
     const offers = await this.prisma.offer.findMany({
-      where: { studentUserId, status: { not: 'WITHDRAWN' } },
+      where: { studentUserId, status: { notIn: [] } },
       include: { organization: true, messages: { orderBy: { sentAt: 'desc' }, take: 1 } },
       orderBy: { updatedAt: 'desc' },
       take: 20
@@ -283,7 +284,7 @@ export class OffersService {
    */
   async conversationsForStudent(studentUserId: string) {
     const offers = await this.prisma.offer.findMany({
-      where: { studentUserId, status: { not: 'WITHDRAWN' } },
+      where: { studentUserId, status: { notIn: [] } },
       include: { organization: true, messages: { orderBy: { sentAt: 'asc' } } }
     });
 
@@ -444,7 +445,7 @@ export class OffersService {
   /** Total unread across every thread, for the badge in the navigation. */
   async unreadForStudent(studentUserId: string) {
     const offers = await this.prisma.offer.findMany({
-      where: { studentUserId, status: { not: 'WITHDRAWN' } },
+      where: { studentUserId, status: { notIn: [] } },
       select: { id: true, studentReadAt: true, messages: { select: { sender: true, sentAt: true } } }
     });
     const threads = offers

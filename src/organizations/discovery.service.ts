@@ -269,7 +269,17 @@ export class DiscoveryService {
     uploadedDocuments: string[] = [],
     readiness: LoanReadiness | null = null
   ) {
-    const personal = (profile.personal as Record<string, string>) || {};
+    const personal = { ...((profile.personal as Record<string, string>) || {}) };
+    const isLinked = offers.some(o => o.isOwn && o.accepted);
+    
+    if (!isLinked) {
+      delete personal['email'];
+      delete personal['mobileCountry'];
+      delete personal['mobileNumber'];
+      delete personal['altMobileCountry'];
+      delete personal['altMobileNumber'];
+      delete personal['whatsappNumber'];
+    }
     const preferences = (profile.studyPreferences as Record<string, string[]>) || {};
     const academic = (profile.academic as Record<string, unknown>) || {};
     const exams = (profile.entranceExams as Record<string, unknown>) || {};
@@ -335,8 +345,8 @@ export class DiscoveryService {
       intake: first(preferences['intake']) || '',
       /** Every field the student picked, not just the first — the workspace shows this as "future study interests". */
       futureInterests: (preferences['fieldOfInterest'] || []).join(', '),
-      email: personal['email'] || profile.user.email || '',
-      mobile: personal['mobileNumber'] || profile.user.phone || '',
+      email: personal['email'] || (isLinked ? profile.user.email : '') || '',
+      mobile: [personal['mobileCountry'], personal['mobileNumber']].filter(Boolean).join(' '),
       currentCity: personal['city'] || '',
       originCountry: personal['country'] || '',
       cgpa,

@@ -496,6 +496,7 @@ const PROJECTS: FormSectionDef = {
   fields: [
     field('links', 'Social presence', 'composite', 1, {
       group: 'presence',
+      required: true,
       composite: 'tagList',
       helpText: 'GitHub, LinkedIn or portfolio links.',
       /** A chip carries one value, so the row is a single field. */
@@ -505,7 +506,7 @@ const PROJECTS: FormSectionDef = {
     }),
     field('projects', 'Projects', 'composite', 2, {
       group: 'projects',
-      required: true,
+      required: false,
       composite: 'projectList',
       itemFields: [
         item('title', 'Title', 'text', 1, { required: true, placeholder: 'e.g. Student success prediction model' }),
@@ -518,6 +519,7 @@ const PROJECTS: FormSectionDef = {
     }),
     field('achievements', 'Achievements', 'composite', 3, {
       group: 'achievements',
+      required: true,
       composite: 'tagList',
       helpText: 'Awards, leadership, competitions or other recognition.',
       itemFields: [

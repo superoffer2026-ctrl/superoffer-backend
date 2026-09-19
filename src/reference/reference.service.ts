@@ -49,6 +49,7 @@ export class ReferenceService {
 
   /** The stored list if there is one, otherwise what shipped. */
   private list(key: string, fallback: readonly string[]): readonly string[] {
+    if (key === 'indiaCities' || key === 'indiaStates' || key === 'universityOptions') return fallback;
     const stored = this.optionSets.valuesFor(key);
     return stored.length ? stored : fallback;
   }

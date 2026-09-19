@@ -18,6 +18,6 @@ import { ChannelRegistry, buildChannelProviders } from './channel.providers';
      */
     { provide: ChannelRegistry, useFactory: () => new ChannelRegistry(buildChannelProviders(process.env)) }
   ],
-  exports: [AutomationService]
+  exports: [AutomationService, ChannelRegistry]
 })
 export class AutomationModule {}

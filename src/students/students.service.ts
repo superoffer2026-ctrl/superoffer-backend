@@ -365,10 +365,13 @@ export class StudentsService {
   }
 
   saveProjectsAchievements(userId: string, dto: ProjectsAchievementsDto) {
-    const linkOf = (pattern: RegExp) => dto.links.find(link => pattern.test(link)) || '';
-    const first = dto.projects[0];
+    const linkOf = (pattern: RegExp) => (dto.links || []).find(link => pattern.test(link)) || '';
+    const first = dto.projects?.[0];
     return this.writeSection(userId, 'projects', {
       ...dto,
+      projects: dto.projects ?? [],
+      achievements: dto.achievements ?? [],
+      links: dto.links ?? [],
       githubLink: linkOf(/github\.com/i),
       linkedinLink: linkOf(/linkedin\.com/i),
       projectTitle: first ? first.title : '',
@@ -459,7 +462,7 @@ export class StudentsService {
         label: 'Financial Information',
         done: Boolean(financial['fundingSource'] && financial['currency'] && financial['needsLoan'])
       },
-      { key: 'projectsAchievements', label: 'Projects & Achievements', done: Array.isArray(projects['projects']) },
+      { key: 'projectsAchievements', label: 'Projects & Achievements', done: Array.isArray(projects['links']) && (projects['links'] as unknown[]).length > 0 && Array.isArray(projects['achievements']) && (projects['achievements'] as unknown[]).length > 0 },
       /** Documents are only gated once the older onboarding flow has set a study level. */
       {
         key: 'documentsUploaded',

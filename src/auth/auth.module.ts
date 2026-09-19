@@ -5,7 +5,6 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
-import { resolveWhatsAppSender, WHATSAPP_SENDER } from './whatsapp-sender';
 
 @Module({
   imports: [
@@ -20,13 +19,7 @@ import { resolveWhatsAppSender, WHATSAPP_SENDER } from './whatsapp-sender';
   ],
   providers: [
     AuthService,
-    JwtStrategy,
-    {
-      provide: WHATSAPP_SENDER,
-      /** Chosen from the environment alone — see `resolveWhatsAppSender`. */
-      useFactory: (config: ConfigService) => resolveWhatsAppSender(config),
-      inject: [ConfigService]
-    }
+    JwtStrategy
   ],
   controllers: [AuthController],
   exports: [AuthService]

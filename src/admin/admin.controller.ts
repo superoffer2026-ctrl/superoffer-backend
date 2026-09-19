@@ -1,11 +1,14 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiHeader, ApiTags } from '@nestjs/swagger';
-import { AdminKeyGuard } from './admin-key.guard';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 import { AdminService } from './admin.service';
 
 @ApiTags('admin')
-@ApiHeader({ name: 'x-admin-key', required: true })
-@UseGuards(AdminKeyGuard)
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
 @Controller('admin')
 export class AdminController {
   constructor(private admin: AdminService) {}
