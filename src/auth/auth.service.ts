@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ChannelRegistry } from '../automation/channel.providers';
 import { LoginDto, ForgotPasswordDto, PasswordResetDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { hashToken } from './otp.util';
+import { hashToken, generateOtpCode, hashOtp, verifyOtpHash } from './otp.util';
 import { PASSWORD_MAX_LENGTH, PASSWORD_PATTERN, PASSWORD_REQUIREMENTS_MESSAGE } from './password.util';
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -55,6 +55,34 @@ export class AuthService {
     }
   }
 
+  async sendRegistrationOtp(email: string, fullName: string) {
+    const code = generateOtpCode();
+    // Using a generic secret here just for HMAC, normally comes from config
+    const otpHash = hashOtp(code, this.config.get('JWT_SECRET') || 'supersecret');
+    
+    const token = this.jwt.sign(
+      { email, fullName, otpHash, scope: 'register_otp' },
+      { expiresIn: '15m' }
+    );
+
+    const emailProvider = this.channels.get('email');
+    if (emailProvider && emailProvider.available()) {
+      await emailProvider.send({
+        to: { email, name: fullName } as any,
+        subject: 'Verify your SuperOffer account',
+        body: `Your registration OTP is ${code}. It expires in 15 minutes.`
+      });
+    } else {
+      this.logger.warn(`Mock Email Registration OTP for ${email}: ${code}`);
+      const fs = require('fs');
+      try {
+        fs.appendFileSync('.dev-otp.log', `${new Date().toISOString()}  REGISTRATION OTP FOR ${email}: ${code}\n`);
+      } catch {}
+    }
+
+    return { token };
+  }
+
   async register(dto: RegisterDto) {
     const email = String(dto.email).trim().toLowerCase();
     
@@ -65,7 +93,25 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const role = dto.role as Role;
 
+
     if (role === 'STUDENT') {
+      if (!dto.token || !dto.otp) {
+        throw new BadRequestException({ code: 'OTP_REQUIRED', message: 'OTP is required for student registration' });
+      }
+
+      try {
+        const payload = this.jwt.verify(dto.token);
+        if (payload.scope !== 'register_otp' || payload.email !== email) {
+          throw new UnauthorizedException({ code: 'INVALID_TOKEN', message: 'Invalid registration token' });
+        }
+        
+        if (!verifyOtpHash(dto.otp, payload.otpHash, this.config.get('JWT_SECRET') || 'supersecret')) {
+          throw new UnauthorizedException({ code: 'INVALID_OTP', message: 'Incorrect OTP' });
+        }
+      } catch {
+        throw new UnauthorizedException({ code: 'INVALID_TOKEN', message: 'OTP verification failed or expired' });
+      }
+
       const student = await this.prisma.$transaction(async tx => {
         const created = await tx.user.create({ 
           data: { email, passwordHash, fullName: dto.fullName, role: Role.STUDENT } 

@@ -11,6 +11,12 @@ import { CurrentUser, AuthenticatedUser } from './current-user.decorator';
 export class AuthController {
   constructor(private auth: AuthService) {}
 
+  @Post('register/send-otp')
+  @HttpCode(HttpStatus.OK)
+  sendRegistrationOtp(@Body() body: { email: string; fullName: string }) {
+    return this.auth.sendRegistrationOtp(body.email, body.fullName);
+  }
+
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.auth.register(dto);

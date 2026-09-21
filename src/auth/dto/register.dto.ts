@@ -65,4 +65,12 @@ export class RegisterDto {
   @ValidateNested()
   @Type(() => OrganizationRegistrationDto)
   organization?: OrganizationRegistrationDto;
+
+  @IsOptional()
+  @IsString()
+  token?: string;
+
+  @IsOptional()
+  @IsString()
+  otp?: string;
 }
