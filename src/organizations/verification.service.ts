@@ -20,7 +20,6 @@ const hostOf = (value: string) =>
  * missing" does not.
  */
 const REQUIRED: Array<{ key: string; asks: string }> = [
-  { key: 'website', asks: 'the official website' },
   { key: 'country', asks: 'the country' },
   { key: 'city', asks: 'the city' }
 ];
