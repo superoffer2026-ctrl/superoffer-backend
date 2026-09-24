@@ -1,16 +1,13 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import type { AutomationRule } from '@prisma/client';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { AdminKeyGuard } from '../admin/admin-key.guard';
 import { AutomationService } from './automation.service';
 
 /** Authoring the rules that make a thread respond to what happens in it. */
 @ApiTags('admin-automation')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('SUPER_ADMIN')
+@ApiHeader({ name: 'x-admin-key', required: true })
+@UseGuards(AdminKeyGuard)
 @Controller('admin/automation')
 export class AutomationController {
   constructor(private automation: AutomationService) {}

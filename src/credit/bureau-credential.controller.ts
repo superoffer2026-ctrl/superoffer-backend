@@ -1,8 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { ApiHeader, ApiTags } from '@nestjs/swagger';
+import { AdminKeyGuard } from '../admin/admin-key.guard';
 import { BureauCredentialService } from './bureau-credential.service';
 
 /**
@@ -13,9 +11,8 @@ import { BureauCredentialService } from './bureau-credential.service';
  * store directly rather than over HTTP.
  */
 @ApiTags('admin-bureau-credentials')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('SUPER_ADMIN')
+@ApiHeader({ name: 'x-admin-key', required: true })
+@UseGuards(AdminKeyGuard)
 @Controller('admin/bureau-credentials')
 export class BureauCredentialController {
   constructor(private credentials: BureauCredentialService) {}
