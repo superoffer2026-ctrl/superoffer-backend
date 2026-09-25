@@ -214,6 +214,12 @@ export class AuthService {
     }
 
     if (user.organization) {
+      if (user.organization.verificationStatus === 'PENDING') {
+        throw new HttpException(
+          { code: 'ACCOUNT_PENDING_APPROVAL', message: 'Your organization registration is pending Super Admin approval', user_id: user.id, approval_status: 'PENDING' },
+          403
+        );
+      }
       if (user.organization.verificationStatus === 'REJECTED') {
         throw new HttpException(
           { code: 'ACCOUNT_REJECTED', message: user.organization.rejectionReason || 'Your organization registration was not approved', user_id: user.id, approval_status: 'REJECTED' },
