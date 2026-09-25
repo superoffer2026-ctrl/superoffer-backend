@@ -375,7 +375,8 @@ const CO_APPLICANT: FormSectionDef = {
   key: 'coApplicant',
   label: 'Parent or Guardian',
   description: 'The co-applicant on an education loan',
-  route: 'co-applicant',
+  /** No wizard route — reached from the dashboard's loan flow instead, not as an onboarding step. */
+  route: '',
   column: 'coApplicant',
   order: 8,
   enabled: true,

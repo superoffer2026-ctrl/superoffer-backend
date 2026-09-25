@@ -82,9 +82,10 @@ async function seedStudent(input: { contactEmail: string; phone: string; fullNam
   const passwordHash = await bcrypt.hash(PASSWORD, 12);
   const existing = await prisma.user.findUnique({ where: { phone: input.phone }, include: { studentProfile: true } });
   if (existing) {
+    /** Re-running after the switch to WhatsApp identity clears any address left on older rows. */
     return prisma.user.update({
       where: { id: existing.id },
-      data: { email: input.contactEmail, emailVerifiedAt: new Date(), passwordHash: await require('bcrypt').hash(PASSWORD, 12), phoneVerifiedAt: new Date() },
+      data: { email: null, emailVerifiedAt: null, passwordHash: await require('bcrypt').hash(PASSWORD, 12), phoneVerifiedAt: new Date() },
       include: { studentProfile: true }
     });
   }
@@ -92,8 +93,6 @@ async function seedStudent(input: { contactEmail: string; phone: string; fullNam
   return prisma.user.create({
     data: {
       passwordHash,
-      email: input.contactEmail,
-      emailVerifiedAt: new Date(),
       phone: input.phone,
       fullName: input.fullName,
       role: 'STUDENT',
@@ -265,8 +264,8 @@ Seed complete.
 
   University officer   officer@northbridge.edu     / ${PASSWORD}
   Loan officer         officer@edufund.example     / ${PASSWORD}
-  Student (submitted)  aarav@example.com           / ${PASSWORD}
-  Student (fresh)      student@example.com         / ${PASSWORD}
+  Student (submitted)  +919876543210               / ${PASSWORD}
+  Student (fresh)      +919876500000               / ${PASSWORD}
   Super Admin          admin@superoffer.com        / ${PASSWORD}
 `);
 }
