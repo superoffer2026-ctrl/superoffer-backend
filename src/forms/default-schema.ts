@@ -496,7 +496,7 @@ const PROJECTS: FormSectionDef = {
   fields: [
     field('links', 'Social presence', 'composite', 1, {
       group: 'presence',
-      required: true,
+      required: false,
       composite: 'tagList',
       helpText: 'GitHub, LinkedIn or portfolio links.',
       /** A chip carries one value, so the row is a single field. */
@@ -519,7 +519,7 @@ const PROJECTS: FormSectionDef = {
     }),
     field('achievements', 'Achievements', 'composite', 3, {
       group: 'achievements',
-      required: true,
+      required: false,
       composite: 'tagList',
       helpText: 'Awards, leadership, competitions or other recognition.',
       itemFields: [

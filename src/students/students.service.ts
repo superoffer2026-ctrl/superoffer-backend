@@ -462,7 +462,7 @@ export class StudentsService {
         label: 'Financial Information',
         done: Boolean(financial['fundingSource'] && financial['currency'] && financial['needsLoan'])
       },
-      { key: 'projectsAchievements', label: 'Projects & Achievements', done: Array.isArray(projects['links']) && (projects['links'] as unknown[]).length > 0 && Array.isArray(projects['achievements']) && (projects['achievements'] as unknown[]).length > 0 },
+      { key: 'projectsAchievements', label: 'Projects & Achievements', done: Array.isArray(projects['links']) },
       /** Documents are only gated once the older onboarding flow has set a study level. */
       {
         key: 'documentsUploaded',

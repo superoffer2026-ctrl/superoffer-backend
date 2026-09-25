@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
+
   ArrayNotEmpty,
   IsArray,
   IsBoolean,
@@ -335,15 +335,15 @@ export class ProjectsAchievementsDto {
   @Type(() => ProjectEntryDto)
   projects?: ProjectEntryDto[];
 
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
-  achievements!: string[];
+  achievements?: string[];
 
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
-  links!: string[];
+  links?: string[];
 
   @IsOptional() @IsString()
   githubLink?: string;
