@@ -85,7 +85,7 @@ async function seedStudent(input: { contactEmail: string; phone: string; fullNam
     /** Re-running after the switch to WhatsApp identity clears any address left on older rows. */
     return prisma.user.update({
       where: { id: existing.id },
-      data: { email: null, emailVerifiedAt: null, passwordHash: await require('bcrypt').hash(PASSWORD, 12), phoneVerifiedAt: new Date() },
+      data: { email: input.contactEmail, emailVerifiedAt: null, passwordHash: await require('bcrypt').hash(PASSWORD, 12), phoneVerifiedAt: new Date() },
       include: { studentProfile: true }
     });
   }
@@ -93,6 +93,7 @@ async function seedStudent(input: { contactEmail: string; phone: string; fullNam
   return prisma.user.create({
     data: {
       passwordHash,
+      email: input.contactEmail,
       phone: input.phone,
       fullName: input.fullName,
       role: 'STUDENT',
@@ -198,6 +199,7 @@ async function main() {
   });
 
   const student = await seedStudent({ contactEmail: 'aarav@example.com', phone: '+919876543210', fullName: 'Aarav Mehta', submitted: true });
+  await seedStudent({ contactEmail: 'student2@example.com', phone: '+919876500002', fullName: 'Fresh Student 2', submitted: false });
   await seedStudent({ contactEmail: 'student@example.com', phone: '+919876500000', fullName: 'New Student', submitted: false });
 
   /** One live offer so the student wallet and the organization pipeline aren't empty. */
