@@ -114,7 +114,13 @@ export class AuthService {
 
       const student = await this.prisma.$transaction(async tx => {
         const created = await tx.user.create({ 
-          data: { email, passwordHash, fullName: dto.fullName, role: Role.STUDENT } 
+          data: { 
+            email, 
+            passwordHash, 
+            fullName: dto.fullName, 
+            role: Role.STUDENT,
+            emailVerifiedAt: new Date()
+          } 
         });
         await tx.studentProfile.create({ data: { userId: created.id } });
         return created;
