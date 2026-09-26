@@ -1,3 +1,4 @@
+import * as nodemailer from 'nodemailer';
 import { Injectable, Logger } from '@nestjs/common';
 import { ChannelKey, ChannelTemplate } from './automation.types';
 import {
@@ -93,8 +94,23 @@ export interface SmtpEmailConfig {
 export class SmtpEmailProvider implements ChannelProvider {
   readonly key = 'email' as const;
   private readonly logger = new Logger('EmailChannel');
+  private transporter: nodemailer.Transporter;
 
-  constructor(private readonly config: SmtpEmailConfig) {}
+  constructor(private readonly config: SmtpEmailConfig) {
+    this.transporter = nodemailer.createTransport({
+      host: this.config.host,
+      port: this.config.port,
+      secure: this.config.port === 465, // true for 465, false for other ports
+      auth: (this.config.user && this.config.pass) ? {
+        user: this.config.user,
+        pass: this.config.pass,
+      } : undefined,
+      tls: {
+        // Do not fail on invalid certs in some environments
+        rejectUnauthorized: false
+      }
+    });
+  }
 
   available(): boolean {
     return !!this.config.host && !!this.config.from;
@@ -105,14 +121,20 @@ export class SmtpEmailProvider implements ChannelProvider {
   }
 
   async send(message: OutboundMessage): Promise<SendResult> {
-    /*
-     * Left as the one place a mail library gets wired in. Throwing rather than
-     * pretending means a half-configured environment shows up as a FAILED
-     * delivery row with a reason, which is the outcome we want it to have.
-     */
-    throw new Error(
-      'SMTP email provider is configured but no transport is wired in yet; unset MAIL_HOST to use the console provider.'
-    );
+    try {
+      const info = await this.transporter.sendMail({
+        from: this.config.from,
+        to: message.to.email || '',
+        subject: message.subject,
+        text: message.body,
+        html: message.body.replace(/\n/g, '<br>')
+      });
+      this.logger.log(`[SMTP] Sent email to ${message.to.email} - MessageId: ${info.messageId}`);
+      return { provider: 'smtp', providerMessageId: info.messageId };
+    } catch (error: any) {
+      this.logger.error(`Failed to send email to ${message.to.email}: ${error.message}`);
+      throw new Error(`SMTP failed: ${error.message}`);
+    }
   }
 }
 
