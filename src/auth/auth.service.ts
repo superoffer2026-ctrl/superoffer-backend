@@ -60,10 +60,11 @@ export class AuthService {
     // Using a generic secret here just for HMAC, normally comes from config
     const otpHash = hashOtp(code, this.config.get('JWT_SECRET') || 'supersecret');
     
-    const token = this.jwt.sign(
-      { email, fullName, otpHash, scope: 'register_otp' },
-      { expiresIn: '15m' }
-    );
+    const token = this.jwt.sign({ email, fullName, otpHash, scope: 'register_otp' }, { expiresIn: '15m' });
+
+    this.logger.warn(`========================================================`);
+    this.logger.warn(`🔑 DEVELOPMENT OTP FOR ${email}: ${code}`);
+    this.logger.warn(`========================================================`);
 
     const emailProvider = this.channels.get('email');
     if (emailProvider && emailProvider.available()) {
