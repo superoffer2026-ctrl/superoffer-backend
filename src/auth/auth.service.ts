@@ -166,7 +166,12 @@ export class AuthService {
       });
     });
 
-    return this.issueTokens(user, {});
+    return {
+      user_id: user.id,
+      role: user.role,
+      approval_status: user.organization?.verificationStatus,
+      can_login: user.organization?.verificationStatus === 'APPROVED'
+    };
   }
 
   async login(dto: LoginDto, meta: SessionMeta = {}) {
